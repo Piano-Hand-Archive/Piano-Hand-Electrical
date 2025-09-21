@@ -1,4 +1,5 @@
 Micropython BLE guide: https://github.com/micropython/micropython/tree/master/examples/bluetooth
+                       https://github.com/micropython/micropython-lib/tree/master/micropython/bluetooth/aioble
 Possible pathway: Using the aioble package. 
 
 Alt options: Use esp-idf extensions with the vs code IDE. 
