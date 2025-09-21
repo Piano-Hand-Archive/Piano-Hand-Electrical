@@ -2,7 +2,9 @@ Micropython BLE guide: https://github.com/micropython/micropython/tree/master/ex
                        https://github.com/micropython/micropython-lib/tree/master/micropython/bluetooth/aioble
 Possible pathway: Using the aioble library. 
 
-Alt options: Use esp-idf extensions with the vs code IDE. 
+Alt options: 
+Use esp-idf extensions with the vs code IDE
+https://idf.espressif.com/
 
 BLE Basics:
 Peripheral: ESP32 microcontroller (advertises)
