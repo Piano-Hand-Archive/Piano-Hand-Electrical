@@ -3,3 +3,9 @@ Micropython BLE guide: https://github.com/micropython/micropython/tree/master/ex
 Possible pathway: Using the aioble library. 
 
 Alt options: Use esp-idf extensions with the vs code IDE. 
+
+BLE Basics:
+Peripheral: ESP32 microcontroller (advertises)
+Central: Our computer (discovering the advertisement device)
+
+
