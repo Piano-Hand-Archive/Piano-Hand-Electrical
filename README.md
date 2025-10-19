@@ -6,3 +6,6 @@ Electrical Division of Piano Hand in the Autonomous Robotics Club
 
 ## SRC information:
 The code is adapted from Spring 2024 and has outdated flex sensors information. We have adapted it for our current architecture with servos, stepper and encoder. We are working on making the PWM information dynamic. 
+
+Input (csv file) for actuator movement: 
+Note duration, Stepper Motor: position of hand, Note and Finger, Sharp (true or false)
