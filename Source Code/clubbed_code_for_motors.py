@@ -4,10 +4,10 @@ import sys
 
 # --- CONFIGURATION ---
 FINGER_COUNT = 5
-servo_pins = [13, 14, 15, 16, 17]   # GPIO pins for servos
-servo_freq = 50                     # I dont know the spec here so went with 50????
+servo_pins = [13, 14, 15, 16, 17]
+servo_freq = 50  # standard servo PWM frequency
 
-# Stepper driver pins (for A4988 / DRV8825)
+# Stepper driver pins (A4988/DRV8825)
 step_pin = Pin(18, Pin.OUT)
 dir_pin = Pin(19, Pin.OUT)
 
@@ -15,71 +15,99 @@ dir_pin = Pin(19, Pin.OUT)
 encoder_clk = Pin(25, Pin.IN)
 encoder_dt = Pin(26, Pin.IN)
 
+# Servo limits (tune per your servo)
+MIN_DUTY = 26
+MAX_DUTY = 128
+
 # --- INITIALIZATION ---
 servos = [PWM(Pin(p), freq=servo_freq) for p in servo_pins]
+last_clk = encoder_clk.value()
 
 # --- HELPER FUNCTIONS ---
 def angle_to_duty(angle):
-    """Convert 0–180° to duty value (ESP32 0–1023)."""
-    min_duty, max_duty = 26, 128
-    return int(min_duty + (max_duty - min_duty) * angle / 180)
+    return int(MIN_DUTY + (MAX_DUTY - MIN_DUTY) * angle / 180)
 
-def move_finger(servo, angle):
-    servo.duty(angle_to_duty(angle))
+def move_finger(finger_idx, angle):
+    servos[finger_idx].duty(angle_to_duty(angle))
 
-def move_fingers(target_angles):
-    """Move all fingers to provided angle list."""
+def move_fingers_smooth(target_angles, steps=10, delay=0.02):
+    """Smoothly interpolate all fingers to target_angles."""
+    current_angles = [0]*FINGER_COUNT
     for i in range(FINGER_COUNT):
-        move_finger(servos[i], target_angles[i])
+        current_angles[i] = 90  # assume starting at 90°, adjust if needed
+    
+    for step in range(1, steps+1):
+        for i in range(FINGER_COUNT):
+            delta = target_angles[i] - current_angles[i]
+            angle = current_angles[i] + delta * step / steps
+            move_finger(i, angle)
+        sleep(delay)
 
-def stepper_rotate(direction, steps=1):
-    """Rotate stepper a number of steps in a given direction."""
-    dir_pin.value(1 if direction > 0 else 0)
-    for _ in range(steps):
+def stepper_move(target_pos, current_pos):
+    """Move stepper to absolute position."""
+    steps = target_pos - current_pos
+    dir_pin.value(1 if steps > 0 else 0)
+    for _ in range(abs(steps)):
         step_pin.value(1)
-        sleep(0.001)
+        sleep(0.002)
         step_pin.value(0)
-        sleep(0.001)
+        sleep(0.002)
+    return target_pos
 
 def read_encoder():
-    """Return +1, -1, or 0 based on encoder movement."""
     global last_clk
     curr_clk = encoder_clk.value()
     if curr_clk != last_clk:
-        if encoder_dt.value() != curr_clk:
-            delta = 1
-        else:
-            delta = -1
+        delta = 1 if encoder_dt.value() != curr_clk else -1
         last_clk = curr_clk
         return delta
     return 0
 
+def parse_csv_line(line):
+    """
+    Parse CSV line: duration_ms,stepper_pos,finger_idx,sharp
+    Example: "500,120,2,True"
+    """
+    parts = line.strip().split(',')
+    if len(parts) != 4:
+        return None
+    duration = int(parts[0])
+    stepper_pos = int(parts[1])
+    finger_idx = int(parts[2])
+    sharp = parts[3].strip().lower() == 'true'
+    return duration, stepper_pos, finger_idx, sharp
+
 # --- MAIN LOOP ---
-last_clk = encoder_clk.value()
+current_stepper_pos = 0
+starting_angles = [90]*FINGER_COUNT  # starting finger positions
 
-print("Ready. Send data in format: a1,a2,a3,a4,a5,stepper_dir,stepper_steps")
+print("Starting CSV playback...")
 
-while True:
-    if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-        # Expected serial input format: "30,45,90,10,70,1,5"
-        line = sys.stdin.readline().strip()
-        try:
-            data = [int(x) for x in line.split(',')]
-            if len(data) == 7:
-                finger_angles = data[:5]
-                step_dir = data[5]
-                step_steps = data[6]
-
-                move_fingers(finger_angles)
-                if step_steps > 0:
-                    stepper_rotate(step_dir, step_steps)
+try:
+    with open('movements.csv', 'r') as f:
+        for line in f:
+            parsed = parse_csv_line(line)
+            if parsed:
+                duration, stepper_target, finger_idx, sharp = parsed
                 
-                print("Updated:", finger_angles, "Stepper:", step_dir, step_steps)
-        except:
-            print("Invalid data")
+                # Determine finger angles for this step
+                finger_angles = starting_angles.copy()
+                finger_angles[finger_idx] = 90 + 15 if sharp else 90
+                
+                # Move fingers smoothly
+                move_fingers_smooth(finger_angles, steps=10, delay=duration/1000/10)
+                starting_angles = finger_angles.copy()
+                
+                # Move stepper
+                current_stepper_pos = stepper_move(stepper_target, current_stepper_pos)
+                
+                sleep(duration/1000)  # hold note duration
+except OSError:
+    print("Error: 'movements.csv' not found.")
 
+# Monitor encoder continuously
+while True:
     delta = read_encoder()
     if delta != 0:
         print("Encoder moved:", delta)
-
     sleep(0.02)
