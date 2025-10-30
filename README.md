@@ -10,4 +10,4 @@ The code is adapted from Spring 2024 and has outdated flex sensors information. 
 Coordinates between all motors using helper functions. 
 Parses the CSV file for input date
    Input (csv file) for actuator movement: 
-   Note duration, Stepper Motor: position of hand, Note and Finger, Sharp (true or false)
+   Note duration, Stepper Motor: hand (left or right), position of hand, Note and Finger, Sharp (true or false)
