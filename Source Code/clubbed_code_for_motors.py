@@ -1,113 +1,91 @@
-from machine import Pin, PWM
+#incomplete (work in progress)
+
+from machine import Pin, PWM, ADC
 from time import sleep
-import sys
 
-# --- CONFIGURATION ---
-FINGER_COUNT = 5
-servo_pins = [13, 14, 15, 16, 17]
-servo_freq = 50  # standard servo PWM frequency
+def setup_servos(pins):
+    servos = []
+    for pin in pins
+    pwm = PWM(Pin(pin)) #this is for analog output on a digital pin, theres documentation on it online
+    pwm.freq(50)  # standard servo frequency
+        servos.append(pwm)
+    return servos
 
-# Stepper driver pins (A4988/DRV8825)
-step_pin = Pin(18, Pin.OUT)
-dir_pin = Pin(19, Pin.OUT)
+servo_pins = {
+    "left": setup_servos([13,14,15,16,17,18,19,20,21,22]),
+    "right": setup_servos([23,24,25,26,27,28,29,30,31,32])
+}
 
-# Rotary encoder pins
-encoder_clk = Pin(25, Pin.IN)
-encoder_dt = Pin(26, Pin.IN)
 
-# Servo limits (tune per your servo)
-MIN_DUTY = 26
-MAX_DUTY = 128
-
-# --- INITIALIZATION ---
-servos = [PWM(Pin(p), freq=servo_freq) for p in servo_pins]
-last_clk = encoder_clk.value()
-
-# --- HELPER FUNCTIONS ---
-def angle_to_duty(angle):
-    return int(MIN_DUTY + (MAX_DUTY - MIN_DUTY) * angle / 180)
-
-def move_finger(finger_idx, angle):
-    servos[finger_idx].duty(angle_to_duty(angle))
-
-def move_fingers_smooth(target_angles, steps=10, delay=0.02):
-    """Smoothly interpolate all fingers to target_angles."""
-    current_angles = [0]*FINGER_COUNT
-    for i in range(FINGER_COUNT):
-        current_angles[i] = 90  # assume starting at 90°, adjust if needed
+def set_angle(servo, angle):
+    duty = int(1638 + (angle / 180) * (8192 - 1638))  # 0°→1638, 180°→8192
+    servo.duty_u16(duty)
     
-    for step in range(1, steps+1):
-        for i in range(FINGER_COUNT):
-            delta = target_angles[i] - current_angles[i]
-            angle = current_angles[i] + delta * step / steps
-            move_finger(i, angle)
-        sleep(delay)
 
-def stepper_move(target_pos, current_pos):
-    """Move stepper to absolute position."""
-    steps = target_pos - current_pos
-    dir_pin.value(1 if steps > 0 else 0)
-    for _ in range(abs(steps)):
-        step_pin.value(1)
-        sleep(0.002)
-        step_pin.value(0)
-        sleep(0.002)
-    return target_pos
+#---------------------------------------------------
+#encoder
+encoder_pins = {
+    "left": ADC(Pin(26)),   
+    "right": ADC(Pin(27))
+}
 
-def read_encoder():
-    global last_clk
-    curr_clk = encoder_clk.value()
-    if curr_clk != last_clk:
-        delta = 1 if encoder_dt.value() != curr_clk else -1
-        last_clk = curr_clk
-        return delta
-    return 0
 
-def parse_csv_line(line):
-    """
-    Parse CSV line: duration_ms,stepper_pos,finger_idx,sharp
-    Example: "500,120,2,True"
-    """
-    parts = line.strip().split(',')
-    if len(parts) != 4:
-        return None
-    duration = int(parts[0])
-    stepper_pos = int(parts[1])
-    finger_idx = int(parts[2])
-    sharp = parts[3].strip().lower() == 'true'
-    return duration, stepper_pos, finger_idx, sharp
+def read_hand_position(hand):
+    # normalized float 0.0 → 1.0
+    return encoder_pins[hand].read_u16() / 65535
 
-# --- MAIN LOOP ---
-current_stepper_pos = 0
-starting_angles = [90]*FINGER_COUNT  # starting finger positions
-
-print("Starting CSV playback...")
-
-try:
-    with open('movements.csv', 'r') as f:
-        for line in f:
-            parsed = parse_csv_line(line)
-            if parsed:
-                duration, stepper_target, finger_idx, sharp = parsed
-                
-                # Determine finger angles for this step
-                finger_angles = starting_angles.copy()
-                finger_angles[finger_idx] = 90 + 15 if sharp else 90
-                
-                # Move fingers smoothly
-                move_fingers_smooth(finger_angles, steps=10, delay=duration/1000/10)
-                starting_angles = finger_angles.copy()
-                
-                # Move stepper
-                current_stepper_pos = stepper_move(stepper_target, current_stepper_pos)
-                
-                sleep(duration/1000)  # hold note duration
-except OSError:
-    print("Error: 'movements.csv' not found.")
-
-# Monitor encoder continuously
-while True:
-    delta = read_encoder()
+def move_stepper_to(hand, target_float):
+    min_steps, max_steps = 0, 200  # tune for your robot
+    target_steps = int(min_steps + target_float * (max_steps - min_steps))
+    delta = target_steps - current_steps[hand]
     if delta != 0:
-        print("Encoder moved:", delta)
-    sleep(0.02)
+        step_motor(steppers[hand], delta)
+        current_steps[hand] = target_steps
+
+# -----------------------
+# PARSE TEXT FILE
+# -----------------------
+def parse_text_file(filename):
+    events = []
+    with open(filename) as f:
+        current = {}
+        for line in f:
+            line = line.strip()
+            if not line:
+                if current:
+                    events.append(current)
+                    current = {}
+                continue
+            key, value = line.split(":", 1)
+            key, value = key.strip(), value.strip()
+            if value.lower() in ["true", "false"]:
+                current[key] = value.lower() == "true"
+            elif value.replace('.', '', 1).isdigit():
+                current[key] = float(value)
+            else:
+                current[key] = value
+        if current:
+            events.append(current)
+    return events
+
+
+# Main
+# -----------------------
+events = parse_text_file("music_data.txt")
+
+for e in events:
+    if e["type"] == "note":
+        hand = e["hand"]
+
+        
+
+  # SERVO MOTOR
+        finger = int(e["finger"]) - 1
+        angle = 60 if e["sharp"] else 120
+        duration = float(e["duration"])
+
+        set_angle(servo_pins[hand][finger], angle)
+        sleep(duration)
+        set_angle(servo_pins[hand][finger], 90)  # reset to neutral
+
+
