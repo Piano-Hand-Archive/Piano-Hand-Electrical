@@ -1,3 +1,4 @@
+#flashed on the esp32 firmware
 import bluetooth
 from machine import Pin, PWM
 import time
