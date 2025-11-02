@@ -1,91 +1,117 @@
 #incomplete (work in progress)
 
-from machine import Pin, PWM, ADC
+'''SAMPLE COMMAND PROMPT
+  {"hand":"left","finger":2,"angle":200,"duration":0.5},
+  {"hand":"left","finger":2,"angle":90,"duration":0.5}
+  
+  we can also reset it to neutral by just commanding it to reset to neutral
+  
+  or exit for quit.
+  
+'''
+import ujson as json
+from machine import Pin, PWM
 from time import sleep
 
+# -----------------------
+# Servo setup
+# -----------------------
 def setup_servos(pins):
     servos = []
-    for pin in pins
-    pwm = PWM(Pin(pin)) #this is for analog output on a digital pin, theres documentation on it online
-    pwm.freq(50)  # standard servo frequency
+    for pin in pins:
+        pwm = PWM(Pin(pin))
+        pwm.freq(50)  # 50 Hz typical servo PWM
         servos.append(pwm)
     return servos
 
 servo_pins = {
-    "left": setup_servos([13,14,15,16,17,18,19,20,21,22]),
+    "left":  setup_servos([13,14,15,16,17,18,19,20,21,22]),
     "right": setup_servos([23,24,25,26,27,28,29,30,31,32])
 }
 
-
+#
+# Servo control (270°)
+# -----------------------
 def set_angle(servo, angle):
-    duty = int(1638 + (angle / 180) * (8192 - 1638))  # 0°→1638, 180°→8192
-    servo.duty_u16(duty)
-    
+    # Miuzie 270° servo expects roughly 500–2500 µs pulse width at 50 Hz
+    # 0° → 500 µs, 270° → 2500 µs
+    # Convert to 16-bit duty (0–65535) for MicroPython
+    min_us, max_us = 500, 2500
+    pulse = min_us + (angle / 270.0) * (max_us - min_us)
+    duty_u16 = int((pulse / 20000) * 65535)  # 20 ms period → 50 Hz
+    servo.duty_u16(duty_u16)
 
-#---------------------------------------------------
-#encoder
-encoder_pins = {
-    "left": ADC(Pin(26)),   
-    "right": ADC(Pin(27))
-}
-
-
-def read_hand_position(hand):
-    # normalized float 0.0 → 1.0
-    return encoder_pins[hand].read_u16() / 65535
-
-def move_stepper_to(hand, target_float):
-    min_steps, max_steps = 0, 200  # tune for your robot
-    target_steps = int(min_steps + target_float * (max_steps - min_steps))
-    delta = target_steps - current_steps[hand]
-    if delta != 0:
-        step_motor(steppers[hand], delta)
-        current_steps[hand] = target_steps
+def neutral_all():
+    for hand in servo_pins:
+        for s in servo_pins[hand]:
+            set_angle(s, 135)  # halfway for 270°
+            
+            
 
 # -----------------------
-# PARSE TEXT FILE
+# Core JSON Command
 # -----------------------
-def parse_text_file(filename):
-    events = []
-    with open(filename) as f:
-        current = {}
-        for line in f:
-            line = line.strip()
-            if not line:
-                if current:
-                    events.append(current)
-                    current = {}
-                continue
-            key, value = line.split(":", 1)
-            key, value = key.strip(), value.strip()
-            if value.lower() in ["true", "false"]:
-                current[key] = value.lower() == "true"
-            elif value.replace('.', '', 1).isdigit():
-                current[key] = float(value)
-            else:
-                current[key] = value
-        if current:
-            events.append(current)
-    return events
+def execute_json(cmd_json):
+    try:
+        data = json.loads(cmd_json)
+    except Exception as e:
+        print("Invalid JSON:", e)
+        return
 
+    # Single action
+    if isinstance(data, dict):
+        handle_action(data)
+    # List of actions
+    elif isinstance(data, list):
+        for item in data:
+            handle_action(item)
+    else:
+        print("Unsupported JSON format")
 
-# Main
-# -----------------------
-events = parse_text_file("music_data.txt")
-
-for e in events:
-    if e["type"] == "note":
-        hand = e["hand"]
-
-        
-
-  # SERVO MOTOR
-        finger = int(e["finger"]) - 1
-        angle = 60 if e["sharp"] else 120
-        duration = float(e["duration"])
-
+def handle_action(action):
+    try:
+        hand = action.get("hand", "right")
+        finger = int(action.get("finger", 1)) - 1
+        angle = float(action.get("angle", 135))
+        duration = float(action.get("duration", 0.5))
+        if hand not in servo_pins or finger >= len(servo_pins[hand]):
+            print("Invalid hand/finger")
+            return
         set_angle(servo_pins[hand][finger], angle)
         sleep(duration)
-        set_angle(servo_pins[hand][finger], 90)  # reset to neutral
+        if action.get("release", True):
+            set_angle(servo_pins[hand][finger], action.get("release_angle", 135))
+    except Exception as e:
+        print("Error:", e)
+
+# -----------------------
+# Command prompt
+# -----------------------
+def repl():
+    print("=== JSON Command Prompt Ready ===")
+    print('Example: {"hand":"left","finger":1,"angle":200,"duration":1.0}')
+    print("Type 'exit' to quit, 'neutral' to reset all.\n")
+    while True:
+        try:
+            cmd = input("cmd> ").strip()
+            if not cmd:
+                continue
+            if cmd == "exit":
+                break
+            elif cmd == "neutral":
+                neutral_all()
+            else:
+                execute_json(cmd)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print("REPL error:", e)
+
+# -----------------------
+# Run
+# -----------------------
+if __name__ == "__main__":
+    neutral_all()
+    repl()
 
 
