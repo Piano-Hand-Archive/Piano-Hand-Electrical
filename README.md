@@ -11,3 +11,6 @@ Coordinates between all motors using helper functions.
 Parses the CSV file for input date
    Input (csv file) for actuator movement: 
    Note duration, Stepper Motor: hand (left or right), position of hand, Note and Finger, Sharp (true or false)
+
+### Microcontroller
+   We are using the ESP32 microcontroller. We have two pins assigned for the direction and the position with 6 servo motors (the thumb gets two) and 6 additional smaller servo motors to be mounted on top of the fingers. 
