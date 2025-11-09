@@ -14,15 +14,16 @@ async def main():
         return
 
     async with BleakClient(device) as client:
-        print(f"Connected to {device.name}")
-        print("Enter commands like (1,ON), (2,OFF), (3,ON). Type 'exit' to quit.\n")
+        print("==== Piano Hand Stepper Control (1~5 Octaves) ====")
+        print("Usage: Enter current and target note names (e.g., C1, E3)")
+        print("Example: (C1,C2) / (Current, Target) → Rotate accordingly\n")
 
         while True:
             cmd = input("Command: ").strip()
             if cmd.lower() == "exit":
                 break
             if not cmd.startswith("(") or not cmd.endswith(")"):
-                print("Invalid format. Use (x,ON) or (x,OFF)")
+                print("Invalid format. Use (C1,D2)")
                 continue
             await client.write_gatt_char(CHAR_UUID, cmd.encode("utf-8"))
             print(f"Sent → {cmd}")
