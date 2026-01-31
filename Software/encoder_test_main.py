@@ -1,103 +1,120 @@
-from machine import Pin
 import time
+from machine import Pin
+from rotary_irq_esp import RotaryIRQ
+
 
 # --- Pin Definitions ---
-CLK_PIN = 25   # GPIO25 connected to rotary encoder CLK
-DT_PIN = 26    # GPIO26 connected to rotary encoder DT
-LED_PIN = 15   # GPIO connected to LED
+CLK_PIN = 25   # GPIO25
+DT_PIN = 26    # GPIO26
+LED_PIN = 14   # GPIO14 (LED)
+
 
 # --- Constants ---
-STEPS_PER_REVOLUTION = 600  # Steps for 360 degrees
-TOLERANCE_ANGLE = 5.0       # Acceptable error (+/- degrees)
-MAX_ITERATIONS = 5          # Number of attempts (n)
-MOVEMENT_WINDOW_MS = 2000   # Time allowed for movement (2 seconds)
+STEPS_PER_REVOLUTION = 600   # Encoder steps per turn
+TOLERANCE_ANGLE = 5.0        # Degrees tolerance
+MAX_ITERATIONS = 5
+MOVEMENT_WINDOW_MS = 4000    # 2 seconds
 
-# --- Variables ---
-counter = 0
-prev_CLK_state = 0
-current_degrees = 0.0
 
-# --- User Input: Target ---
+# --- Target Position ---
 desired_position = 90.0
 
-# --- Initialize Pins ---
-clk = Pin(CLK_PIN, Pin.IN, Pin.PULL_UP)
-dt = Pin(DT_PIN, Pin.IN, Pin.PULL_UP)
+
+# --- Initialize LED ---
 led = Pin(LED_PIN, Pin.OUT)
+
+
+# --- Initialize Rotary Encoder (Library) ---
+r = RotaryIRQ(
+    pin_num_clk=CLK_PIN,
+    pin_num_dt=DT_PIN,
+    reverse=True,
+    incr=1,
+    range_mode=RotaryIRQ.RANGE_UNBOUNDED,
+    pull_up=True,
+    half_step=False,
+)
+
 
 # --- Helper: Shortest Circular Distance ---
 def get_distance(target, current):
-    # Calculate difference
+
     diff = abs(target - current) % 360
-    # Return the shorter path (clockwise vs counter-clockwise)
     return min(diff, 360 - diff)
 
-# Read initial state before loop
-prev_CLK_state = clk.value()
 
-print(f"Program Start. Target: {desired_position}°. Tolerance: {TOLERANCE_ANGLE}°")
+# --- Initial Encoder Value ---
+val_old = r.value()
+
+
+print(f"Program Start. Target: {desired_position}°")
 print("-" * 40)
 
+
 # ==========================================
-# Main Loop (Runs n times)
+# Main Loop
 # ==========================================
 for i in range(MAX_ITERATIONS):
-    print(f"\nIteration {i + 1} / {MAX_ITERATIONS}")
-    
-    # 1. Turn LED ON (Start Movement Window)
+
+    print(f"\nIteration {i+1} / {MAX_ITERATIONS}")
+
+    # 1. LED ON → Start moving
     led.value(1)
     print(">>> LED ON: MOVE ENCODER NOW <<<")
-    
-    # Record the start time for the window
-    start_time = time.ticks_ms()
-    
-    # 2. Polling Loop (Runs for 2 seconds)
-    # The code stays inside this 'while' loop to catch fast encoder pulses
-    while time.ticks_diff(time.ticks_ms(), start_time) < MOVEMENT_WINDOW_MS:
-        
-        CLK_state = clk.value()
 
-        if CLK_state != prev_CLK_state:
-            if CLK_state == 1:
-                # Determine direction based on DT pin
-                if dt.value() == 1:
-                    counter -= 1 # Counter-Clockwise
-                else:
-                    counter += 1 # Clockwise
-            prev_CLK_state = CLK_state
-            
-            # Optional: Print updates sparingly if needed, but avoiding print 
-            # inside a fast loop is better for accuracy.
-            
-    # 3. Turn LED OFF (Stop Movement Window)
+    start_time = time.ticks_ms()
+
+
+    # 2. Read encoder for 2 seconds
+    while time.ticks_diff(time.ticks_ms(), start_time) < MOVEMENT_WINDOW_MS:
+
+        val_new = r.value()
+
+        if val_new != val_old:
+            val_old = val_new
+
+        time.sleep_ms(5)   # small debounce delay
+
+
+    # 3. LED OFF → Stop
     led.value(0)
     print(">>> LED OFF: STOP MOVING <<<")
 
-    # 4. Calculate Position and Distance
-    # Normalize counter to degrees
-    current_degrees = (counter % STEPS_PER_REVOLUTION) * (360 / STEPS_PER_REVOLUTION)
-    
-    # Calculate absolute shortest distance
+
+    # 4. Convert steps → degrees
+    steps = val_old % STEPS_PER_REVOLUTION
+
+    current_degrees = steps * (360 / STEPS_PER_REVOLUTION)
+
+
+    # 5. Distance to target
     distance = get_distance(desired_position, current_degrees)
 
-    # 5. Testing Statements
+
+    # 6. Status
     print(f"  Current Position: {current_degrees:.2f}°")
-    print(f"  Target Position:  {desired_position}°")
-    print(f"  Distance to go:   {distance:.2f}°")
+    print(f"  Target Position:  {desired_position:.2f}°")
+    print(f"  Distance:         {distance:.2f}°")
 
-    # 6. Check Success Condition
+
+    # 7. Check success
     if distance <= TOLERANCE_ANGLE:
-        print("\n*** SUCCESS: Target Reached within Tolerance! ***")
+
+        print("\n*** SUCCESS: Target Reached! ***")
         break
+
     else:
-        print("  Result: Not close enough. Retrying...")
-    
-    # Optional: Short pause before next iteration starts
-    time.sleep(1)
+        print("  Not close enough. Retrying...")
+
+
+    time.sleep(2)
+
 
 # ==========================================
-# End of Program
+# End
 # ==========================================
-led.value(0) # Ensure LED is off
+led.value(0)
+
 print("-" * 40)
 print("Program Ended.")
+
