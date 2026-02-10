@@ -19,7 +19,7 @@ DT_PIN       = 26   # Encoder DT
 # --- Constants ---
 KEY_ANGLE_DEG  = 19.6   # Angle per key (degrees)
 MAX_OCTAVE     = 5
-PULSE_US       = 2000   # Motor speed (larger = slower & more stable)
+PULSE_US       = 200   # Motor speed (larger = slower & more stable)
 TOLERANCE_PCT  = 0.03   # Tolerance band 3% (0.03)
 
 # --- Encoder Settings ---
@@ -72,7 +72,7 @@ def parse_note_with_octave(note_input):
     if octave < 1 or octave > MAX_OCTAVE: return -1
     return (octave - 1) * 12 + note_index
 
-# ==========================================
+# ===========================================
 # 4. BLE Communication Logic
 # ==========================================
 ble = bluetooth.BLE()
@@ -153,7 +153,7 @@ while True:
 
         # 3. Check if target is reached
         if abs(error) <= tolerance:
-            print(f"Reached Cur: {current_deg:.2f}° / Tgt: {target_angle:.2f}° (Err: {error:.2f}°)")
+            print(f"Reached! Cur: {current_deg:.2f}° / Tgt: {target_angle:.2f}° (Err: {error:.2f}°)")
             is_active = False # Stop the motor
 
         else:
@@ -176,4 +176,5 @@ while True:
     else:
         # Idle state (reduce CPU usage)
         time.sleep_ms(20)
+
 
