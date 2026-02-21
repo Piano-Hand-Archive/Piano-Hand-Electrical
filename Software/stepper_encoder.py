@@ -19,7 +19,7 @@ DT_PIN       = 26   # Encoder DT
 # --- Constants ---
 KEY_ANGLE_DEG  = 19.6   # Angle per key (degrees)
 MAX_OCTAVE     = 5
-PULSE_US       = 200   # Motor speed (larger = slower & more stable)
+PULSE_US       = 300   # Motor speed (larger = slower & more stable)
 TOLERANCE_PCT  = 0.03   # Tolerance band 3% (0.03)
 
 # --- Encoder Settings ---
@@ -176,5 +176,6 @@ while True:
     else:
         # Idle state (reduce CPU usage)
         time.sleep_ms(20)
+
 
 
