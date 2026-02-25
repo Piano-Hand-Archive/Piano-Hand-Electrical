@@ -1,0 +1,41 @@
+from machine import Pin, PWM
+
+# Setup
+servo_updown = PWM(Pin(25))
+servo_side   = PWM(Pin(26))
+
+servo_updown.freq(50)
+servo_side.freq(50)
+
+MIN_US = 500
+MAX_US = 2500
+PERIOD_US = 20000  # 20ms (50Hz)
+
+def set_angle(servo, angle):
+    pulse = MIN_US + (angle / 270.0) * (MAX_US - MIN_US)
+    duty_u16 = int((pulse / PERIOD_US) * 65535)
+    servo.duty_u16(duty_u16)
+
+# ---------- Up/Down Finger (Full 270°) ----------
+
+def finger_up():
+    set_angle(servo_updown, 270)
+
+def finger_down():
+    set_angle(servo_updown, 0)
+
+def finger_set(angle):   # general control
+    set_angle(servo_updown, angle)
+
+# ---------- Side Movement (±15° only) ----------
+
+NEUTRAL = 135  # midpoint for 270° servo
+
+def side_center():
+    set_angle(servo_side, NEUTRAL)
+
+def side_left():
+    set_angle(servo_side, NEUTRAL - 15)
+
+def side_right():
+    set_angle(servo_side, NEUTRAL + 15)
