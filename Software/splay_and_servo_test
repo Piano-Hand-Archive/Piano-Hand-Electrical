@@ -1,4 +1,5 @@
 from machine import Pin, PWM
+import time
 
 # Setup
 servo_updown = PWM(Pin(25))
@@ -39,3 +40,35 @@ def side_left():
 
 def side_right():
     set_angle(servo_side, NEUTRAL + 15)
+    
+# --- Initialization Sequence ---
+
+def initialize_servos():
+    print("Initializing servos...")
+    
+    # 1. Start with the side-to-side at neutral (135°)
+    side_center()
+    
+    # 2. Start with the finger in a 'safe' position (e.g., down/0°)
+    finger_down()
+    
+    print("Servos ready.")
+
+# Execute initialization
+initialize_servos()
+
+
+while True:
+    side_left()
+    finger_up()
+    time.sleep(1)
+    
+    side_right()
+    finger_down()
+    time.sleep(1)
+    
+    side_right()
+    time.sleep(1)
+    
+    side_left()
+    time.sleep(1)
