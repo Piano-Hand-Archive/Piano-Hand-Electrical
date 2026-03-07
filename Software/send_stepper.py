@@ -7,16 +7,18 @@ CHAR_UUID    = "19b10002-e8f2-537e-4f6c-d104768a1214"
 
 async def main():
     print("Scanning for ESP32-BLE-Control...")
-    device = await BleakScanner.find_device_by_name("ESP32-BLE-Control")
+    devi3ce = await BleakScanner.find_device_by_name("ESP32-BLE-Control")
     if not device:
         print("ESP32 not found. Make sure it's powered and advertising.")
         return
 
     async with BleakClient(device) as client:
 
-         # Request larger MTU
-         mtu = await client.get_mtu()
-         print("MTU:", mtu)
+         # POTENTIALLY Request larger MTU --------------------------------
+        # mtu = await client.get_mtu()
+         # print("MTU:", mtu)
+        #---------------------------------------------------------------------
+        
         
         print("Connected to ESP32")
         print("Enter commands in format: (C1,E3) or type 'exit' to quit.\n")
