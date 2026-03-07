@@ -13,6 +13,11 @@ async def main():
         return
 
     async with BleakClient(device) as client:
+
+         # Request larger MTU
+         mtu = await client.get_mtu()
+         print("MTU:", mtu)
+        
         print("Connected to ESP32")
         print("Enter commands in format: (C1,E3) or type 'exit' to quit.\n")
         
