@@ -12,15 +12,19 @@ SERVICE_UUID = bluetooth.UUID("19b10000-e8f2-537e-4f6c-d104768a1214")
 CHAR_UUID    = bluetooth.UUID("19b10002-e8f2-537e-4f6c-d104768a1214")
 
 # --- Hardware Pins ---
-DIR_PIN_NUM  = 27
-STEP_PIN_NUM = 26
-ENC_CLK_PIN  = 13
-ENC_DT_PIN   = 14
-SERVO_PINS   = [32, 33, 21, 22]
+DIR_PIN_NUM  = 32
+STEP_PIN_NUM = 33
+ENC_CLK_PIN  = 12
+ENC_DT_PIN   = 13
+
+# FIXED: Removed Pins 1 and 3 (TX/RX) to prevent immediate serial crashes. !! IMPORTANT
+SERVO_PINS   = [14, 15, 26, 27] 
 
 # --- Physical Dimensions (INCHES) ---
 WHEEL_DIAMETER_IN = 3.11
 WHEEL_CIRCUMFERENCE_IN = math.pi * WHEEL_DIAMETER_IN
+
+# Change this
 INCHES_PER_NOTE = 0.415
 
 # --- Motor & Encoder Math ---
@@ -103,18 +107,19 @@ def play_finger(finger_idx):
         
     servo = fingers[finger_idx - 1]
     
-    # 90 Degree Swing
-    set_angle(servo, 90)    # Strike down 
-    time.sleep(0.15) 
+    # Applied working test values (180 degree swing with 0.6s delay)
+    set_angle(servo, 0)     # Strike down 
+    time.sleep(0.6)         # Wait for full physical swing
     set_angle(servo, 180)   # Lift up 
-    time.sleep(0.15)
+    time.sleep(0.6)         # Wait for full physical lift
     print(f"Finger {finger_idx} played.")
 
 # Initialize servos to UP (180 deg) at boot
 print("Initializing servos...")
 for f in fingers:
     set_angle(f, 180)
-time.sleep(0.5)
+# Increased delay here based on the working test code to ensure they all reach the top before BLE starts
+time.sleep(1.0) 
 
 # ==========================================
 # 4. BLE Communication Logic
