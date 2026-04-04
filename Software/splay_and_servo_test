@@ -1,49 +1,89 @@
-#splay servo code which utilizes PCA9865
-
 from machine import Pin, I2C
 import time
-from pca9685 import PCA9685  # make sure this library is on your ESP32
+import struct
 
-# --- I2C setup (ESP32 default pins) ---
-i2c = I2C(0, scl=Pin(22), sda=Pin(21))
+# --- PCA9685 Driver ---
+class PCA9685:
+    def __init__(self, i2c, addr=0x40):
+        self.i2c = i2c
+        self.addr = addr
+        # Reset and Sleep
+        self.i2c.writeto_mem(self.addr, 0x00, b'\x10')
+        # Prescale for ~50Hz (Oscillator is typically 25MHz)
+        # 121 (0x79) is standard, but some clones prefer 122 (0x7A)
+        self.i2c.writeto_mem(self.addr, 0xFE, b'\x79')
+        # Wake
+        self.i2c.writeto_mem(self.addr, 0x00, b'\x00')
+        time.sleep_ms(10)
+        # Auto-increment
+        self.i2c.writeto_mem(self.addr, 0x00, b'\xA0')
 
+    def set_pwm(self, channel, on, off):
+        reg = 0x06 + 4 * channel
+        data = struct.pack('<HH', on, off)
+        self.i2c.writeto_mem(self.addr, reg, data)
+
+    def set_servo_us(self, channel, pulse_us):
+        # 20ms period (50Hz), 4096 steps
+        ticks = int(pulse_us * 4096 / 20000)
+        self.set_pwm(channel, 0, ticks)
+
+# --- Servo wrapper ---
+class Servo:
+    def __init__(self, pca, channel, max_angle=270, min_us=500, max_us=2500):
+        self.pca = pca
+        self.channel = channel
+        self.max_angle = max_angle
+        self.min_us = min_us
+        self.max_us = max_us
+        # Match this to your starting position in main loop
+        self.current_angle = 90
+
+    def go_to(self, angle):
+        """Move servo to a specific angle and update tracking."""
+        angle = max(0, min(self.max_angle, angle))
+        pulse_us = self.min_us + (angle / self.max_angle) * (self.max_us - self.min_us)
+        self.pca.set_servo_us(self.channel, pulse_us)
+        self.current_angle = angle
+        print(f"Ch {self.channel} -> {angle}°")
+
+    def move_forward_15(self, hold_time=0.5):
+        target = min(self.max_angle, self.current_angle + 15)
+        self.go_to(target)
+        time.sleep(hold_time)
+
+    def move_back_15(self, hold_time=0.5):
+        target = max(0, self.current_angle - 15)
+        self.go_to(target)
+        time.sleep(hold_time)
+
+# --- Initialize I2C ---
+i2c = I2C(0, sda=Pin(21), scl=Pin(22), freq=400000)
 pca = PCA9685(i2c)
-pca.freq(50)  # 50Hz for servos
 
-# --- Servo settings ---
-MIN_US = 500
-MAX_US = 2500
-PERIOD_US = 20000  # 20ms
+# --- Initialize 5 S51 Servos ---
+# Using 135 as mid-point for a 270 degree servo
+servos = [Servo(pca, c, max_angle=270) for c in [0, 1, 2, 3, 6]]
 
-# Convert angle to duty for PCA9685 (0–4095)
-def angle_to_duty(angle):
-    pulse = MIN_US + (angle / 270.0) * (MAX_US - MIN_US)
-    duty = int((pulse / PERIOD_US) * 4095)
-    return duty
+print("=== Initializing: Staggered Start ===")
+# Moving all at once causes the LM2596 to spasm. 
+# We move them one by one to their mid-point (135).
+for s in servos:
+    s.go_to(90)
+    time.sleep(10) # Give the buck converter 500ms to recover
 
-def set_servo(channel, angle):
-    duty = angle_to_duty(angle)
-    pca.duty(channel, duty)
+time.sleep(10)
 
-# --- Define your 5 servos (channels 0–4) ---
-servos = [0, 1, 2, 3, 4]
+print("=== Starting Test Loop ===")
+for s in servos:
+    print(f"Testing channel {s.channel}...")
+    
+    # Step 1: Forward 15 (135 -> 150)
+    s.move_forward_15(hold_time=10)
+    time.sleep(10) # Small gap between individual movements
+    
+    # Step 2: Back 15 (150 -> 135)
+    s.move_back_15(hold_time=10)
+    time.sleep(10)
 
-# --- Move all servos to 0° initially ---
-def initialize():
-    for ch in servos:
-        set_servo(ch, 0)
-    print("Servos initialized")
-
-initialize()
-
-# --- Main loop: +15° then back to 0° ---
-while True:
-    # Move to 15°
-    for ch in servos:
-        set_servo(ch, 15)
-    time.sleep(1)
-
-    # Return to 0°
-    for ch in servos:
-        set_servo(ch, 0)
-    time.sleep(1)
+print("=== Test complete ===")
