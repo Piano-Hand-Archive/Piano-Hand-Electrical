@@ -1,0 +1,138 @@
+from machine import UART, Pin
+import time
+
+uart = UART(2, baudrate=115200, tx=Pin(16), rx=Pin(17))
+ADDR = 0xE0
+
+MSTEP          = 16
+PULSES_PER_REV = 3200
+SPEED_GEAR     = 80
+
+KEY_NAMES = [
+    "C1","D1","E1","F1","G1","A1","B1",
+    "C2","D2","E2","F2","G2","A2","B2",
+    "C3","D3","E3","F3","G3","A3","B3",
+    "C4","D4","E4","F4","G4","A4","B4","C5"
+]
+KEY_INDEX = {k: i for i, k in enumerate(KEY_NAMES)}
+
+step_degrees = 0.0
+current_idx  = 0
+
+def calc_crc(data):
+    return sum(data) & 0xFF
+
+def move_degrees(degrees):
+    if abs(degrees) < 0.01:
+        return
+
+    pulses = int(abs(degrees) / 360.0 * PULSES_PER_REV)
+    if pulses == 0:
+        return
+
+    is_ccw = degrees < 0
+    speed_byte = (0x80 | SPEED_GEAR) if is_ccw else SPEED_GEAR
+
+    data = bytes([
+        ADDR, 0xFD, speed_byte,
+        (pulses >> 24) & 0xFF,
+        (pulses >> 16) & 0xFF,
+        (pulses >> 8)  & 0xFF,
+        pulses & 0xFF
+    ])
+    pkt = data + bytes([calc_crc(data)])
+    uart.write(pkt)
+    time.sleep_ms(5)
+    uart.read()
+
+    rpm = SPEED_GEAR * 30000 / (MSTEP * 200)
+    rotations = abs(degrees) / 360.0
+    wait_ms = int((rotations / rpm) * 60000 * 1.2) + 30
+    time.sleep_ms(wait_ms)
+
+def goto_key(key_name):
+    global current_idx
+
+    if key_name not in KEY_INDEX:
+        print(f"  [ERR] invalid key: {key_name}")
+        return
+
+    target_idx = KEY_INDEX[key_name]
+    steps = target_idx - current_idx
+
+    if steps == 0:
+        print(f"  already at {key_name}")
+        return
+
+    degrees = steps * step_degrees
+    print(f"  {KEY_NAMES[current_idx]} -> {key_name} ({steps:+d} steps, {degrees:+.1f} deg)")
+    move_degrees(degrees)
+    current_idx = target_idx
+    print(f"  OK {key_name}")
+
+def stop_motor():
+    cmd = bytes([ADDR, 0xF7])
+    uart.write(cmd + bytes([calc_crc(cmd)]))
+
+def main():
+    global step_degrees, current_idx
+
+    print("\nPiano Move Mode")
+    print("Commands:")
+    print("  SET 30    -> set step = 30 deg")
+    print("  C1        -> move to C1")
+    print("  (C1,D3)   -> move C1 then D3")
+    print("  ZERO      -> reset pos to C1")
+    print("  STOP / POS\n")
+
+    while True:
+        try:
+            inp = input("> ").strip().upper()
+        except KeyboardInterrupt:
+            print("\nbye")
+            stop_motor()
+            break
+
+        if inp.startswith("SET"):
+            try:
+                val = float(inp.replace("SET","").strip())
+                step_degrees = val
+                print(f"  step = {val} deg")
+                print(f"  C1->C2 = {val*7:.1f}, C1->C5 = {val*28:.1f}")
+            except:
+                print("  [?] use: SET 30")
+
+        elif inp == "STOP":
+            stop_motor()
+            print("  stopped")
+
+        elif inp == "ZERO":
+            current_idx = 0
+            print("  reset to C1")
+
+        elif inp == "POS":
+            print(f"  pos: {KEY_NAMES[current_idx]} (idx={current_idx})")
+            print(f"  step: {step_degrees} deg")
+
+        elif "," in inp:
+            raw = inp.replace("(","").replace(")","").replace(" ","")
+            parts = raw.split(",")
+            if len(parts) == 2 and parts[0] in KEY_INDEX and parts[1] in KEY_INDEX:
+                if step_degrees == 0:
+                    print("  [!] SET step first")
+                    continue
+                goto_key(parts[0])
+                goto_key(parts[1])
+            else:
+                print("  [?] use: (C1,D3)")
+
+        elif inp in KEY_INDEX:
+            if step_degrees == 0:
+                print("  [!] SET step first")
+                continue
+            goto_key(inp)
+
+        else:
+            print("  [?] SET / key / (C1,D3) / ZERO / STOP / POS")
+
+main()
