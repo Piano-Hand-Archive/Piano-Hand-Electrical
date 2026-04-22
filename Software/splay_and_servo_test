@@ -4,24 +4,31 @@ import struct
       
 # --- PCA9685 Driver ---
 class PCA9685:
-    def __init__(self, i2c, addr=0x40):
+    def __init__(self, i2c, addr=0x40, freq=50):
         self.i2c = i2c
         self.addr = addr
+      self.freq = freq
         # Reset and Sleep
         self.i2c.writeto_mem(self.addr, 0x00, b'\x10')
+            time.sleep_ms(5)
         # Prescale for ~50Hz (Oscillator is typically 25MHz)
         # 121 (0x79) is standard, but some clones prefer 122 (0x7A)
         self.i2c.writeto_mem(self.addr, 0xFE, b'\x79')
         # Wake
         self.i2c.writeto_mem(self.addr, 0x00, b'\x00')
-        time.sleep_ms(10)
+        time.sleep_ms(5)
         # Auto-increment
         self.i2c.writeto_mem(self.addr, 0x00, b'\xA0')
 
     def set_pwm(self, channel, on, off):
-        reg = 0x06 + 4 * channel
+        '''reg = 0x06 + 4 * channel
         data = struct.pack('<HH', on, off)
-        self.i2c.writeto_mem(self.addr, reg, data)
+        self.i2c.writeto_mem(self.addr, reg, data)'''
+      if channel < 0 or channel > 15:
+            return
+      reg = 0x06 + 4 * channel
+      self.i2c.writeto_mem(self.addr, reg, bytes([
+            on & 0xFF, (on >> 8) & 0xFF, off & 0xFF, (off >> 8) & 0xFF]))
 
     def set_servo_us(self, channel, pulse_us):
         # 20ms period (50Hz), 4096 steps
