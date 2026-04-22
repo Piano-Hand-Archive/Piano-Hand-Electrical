@@ -1,0 +1,217 @@
+from machine import UART, Pin, I2C
+import time
+
+# =========================
+# UART STEPPER SETUP
+# =========================
+uart = UART(2, baudrate=115200, tx=Pin(16), rx=Pin(17))
+ADDR = 0xE0
+
+MSTEP          = 16
+PULSES_PER_REV = 3200
+SPEED_GEAR     = 80
+
+# =========================
+# PCA9685 SERVO DRIVER
+# =========================
+class PCA9685:
+    def __init__(self, i2c, addr=0x40):
+        self.i2c = i2c
+        self.addr = addr
+        self.i2c.writeto_mem(self.addr, 0x00, b'\x00')
+
+    def set_pwm_freq(self, freq):
+        prescale = int(25000000.0 / (4096 * freq) - 1)
+        old = self.i2c.readfrom_mem(self.addr, 0x00, 1)
+        self.i2c.writeto_mem(self.addr, 0x00, bytes([(old[0] & 0x7F) | 0x10]))
+        self.i2c.writeto_mem(self.addr, 0xFE, bytes([prescale]))
+        self.i2c.writeto_mem(self.addr, 0x00, old)
+        time.sleep_ms(5)
+        self.i2c.writeto_mem(self.addr, 0x00, bytes([old[0] | 0xa1]))
+
+    def set_pwm(self, ch, on, off):
+        data = bytearray([on & 0xFF, on >> 8, off & 0xFF, off >> 8])
+        self.i2c.writeto_mem(self.addr, 0x06 + 4 * ch, data)
+
+# =========================
+# SERVO SETUP (5 FINGERS)
+# =========================
+i2c = I2C(0, scl=Pin(22), sda=Pin(21))  # adjust if needed
+pca = PCA9685(i2c)
+pca.set_pwm_freq(50)
+
+servo_ch = [0, 1, 2, 3, 4]
+
+OPEN  = 150   # adjust!
+CLOSE = 500   # adjust!
+
+def move_finger(i):
+    if i < 0 or i > 4:
+        return
+
+    print(f"  Finger {i+1}")
+
+    pca.set_pwm(servo_ch[i], 0, CLOSE)
+    time.sleep_ms(250)
+
+    pca.set_pwm(servo_ch[i], 0, OPEN)
+    time.sleep_ms(250)
+
+def move_all_fingers():
+    for i in range(5):
+        move_finger(i)
+
+def key_to_finger(idx):
+    return idx % 5
+
+# =========================
+# PIANO KEY SYSTEM
+# =========================
+KEY_NAMES = [
+    "C1","D1","E1","F1","G1","A1","B1",
+    "C2","D2","E2","F2","G2","A2","B2",
+    "C3","D3","E3","F3","G3","A3","B3",
+    "C4","D4","E4","F4","G4","A4","B4","C5"
+]
+KEY_INDEX = {k: i for i, k in enumerate(KEY_NAMES)}
+
+step_degrees = 0.0
+current_idx  = 0
+
+# =========================
+# STEPPER FUNCTIONS
+# =========================
+def calc_crc(data):
+    return sum(data) & 0xFF
+
+def move_degrees(degrees):
+    if abs(degrees) < 0.01:
+        return
+
+    pulses = int(abs(degrees) / 360.0 * PULSES_PER_REV)
+    if pulses == 0:
+        return
+
+    is_ccw = degrees < 0
+    speed_byte = (0x80 | SPEED_GEAR) if is_ccw else SPEED_GEAR
+
+    data = bytes([
+        ADDR, 0xFD, speed_byte,
+        (pulses >> 24) & 0xFF,
+        (pulses >> 16) & 0xFF,
+        (pulses >> 8)  & 0xFF,
+        pulses & 0xFF
+    ])
+    pkt = data + bytes([calc_crc(data)])
+    uart.write(pkt)
+    time.sleep_ms(5)
+    uart.read()
+
+    rpm = SPEED_GEAR * 30000 / (MSTEP * 200)
+    rotations = abs(degrees) / 360.0
+    wait_ms = int((rotations / rpm) * 60000 * 1.2) + 30
+    time.sleep_ms(wait_ms)
+
+def goto_key(key_name):
+    global current_idx
+
+    if key_name not in KEY_INDEX:
+        print(f"  [ERR] invalid key: {key_name}")
+        return
+
+    target_idx = KEY_INDEX[key_name]
+    steps = target_idx - current_idx
+
+    if steps == 0:
+        print(f"  already at {key_name}")
+        return
+
+    degrees = steps * step_degrees
+    print(f"  {KEY_NAMES[current_idx]} -> {key_name}")
+
+    move_degrees(degrees)
+    current_idx = target_idx
+
+    # trigger finger automatically
+    finger = key_to_finger(target_idx)
+    move_finger(finger)
+
+def stop_motor():
+    cmd = bytes([ADDR, 0xF7])
+    uart.write(cmd + bytes([calc_crc(cmd)]))
+
+# =========================
+# MAIN LOOP
+# =========================
+def main():
+    global step_degrees, current_idx
+
+    print("\nPiano + Hand Control")
+    print("Commands:")
+    print("  SET 30")
+    print("  C1 / (C1,D3)")
+    print("  F1–F5 (finger)")
+    print("  HAND (all fingers)")
+    print("  ZERO / STOP / POS\n")
+
+    while True:
+        try:
+            inp = input("> ").strip().upper()
+        except KeyboardInterrupt:
+            print("\nbye")
+            stop_motor()
+            break
+
+        if inp.startswith("SET"):
+            try:
+                val = float(inp.replace("SET","").strip())
+                step_degrees = val
+                print(f"  step = {val} deg")
+            except:
+                print("  use: SET 30")
+
+        elif inp == "STOP":
+            stop_motor()
+            print("  stopped")
+
+        elif inp == "ZERO":
+            current_idx = 0
+            print("  reset to C1")
+
+        elif inp == "POS":
+            print(f"  pos: {KEY_NAMES[current_idx]}")
+            print(f"  step: {step_degrees}")
+
+        elif inp.startswith("F"):
+            try:
+                f = int(inp[1]) - 1
+                move_finger(f)
+            except:
+                print("  use F1–F5")
+
+        elif inp == "HAND":
+            move_all_fingers()
+
+        elif "," in inp:
+            raw = inp.replace("(","").replace(")","").replace(" ","")
+            parts = raw.split(",")
+
+            if len(parts) == 2 and parts[0] in KEY_INDEX and parts[1] in KEY_INDEX:
+                if step_degrees == 0:
+                    print("  SET step first")
+                    continue
+                goto_key(parts[0])
+                goto_key(parts[1])
+            else:
+                print("  use: (C1,D3)")
+
+        elif inp in KEY_INDEX:
+            if step_degrees == 0:
+                print("  SET step first")
+                continue
+            goto_key(inp)
+
+        else:
+            print("  unknown command")
+
+main()
