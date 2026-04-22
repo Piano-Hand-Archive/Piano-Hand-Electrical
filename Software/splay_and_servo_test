@@ -7,8 +7,8 @@ class PCA9685:
     def __init__(self, i2c, addr=0x40, freq=50):
         self.i2c = i2c
         self.addr = addr
-      self.freq = freq
-        # Reset and Sleep
+        self.freq = freq
+        #  and Sleep
         self.i2c.writeto_mem(self.addr, 0x00, b'\x10')
             time.sleep_ms(5)
         # Prescale for ~50Hz (Oscillator is typically 25MHz)
@@ -24,11 +24,11 @@ class PCA9685:
         '''reg = 0x06 + 4 * channel
         data = struct.pack('<HH', on, off)
         self.i2c.writeto_mem(self.addr, reg, data)'''
-      if channel < 0 or channel > 15:
+        if channel < 0 or channel > 15:
             return
-      reg = 0x06 + 4 * channel
-      self.i2c.writeto_mem(self.addr, reg, bytes([
-            on & 0xFF, (on >> 8) & 0xFF, off & 0xFF, (off >> 8) & 0xFF]))
+        reg = 0x06 + 4 * channel
+        self.i2c.writeto_mem(self.addr, reg, bytes([
+                on & 0xFF, (on >> 8) & 0xFF, off & 0xFF, (off >> 8) & 0xFF]))
 
     def set_servo_us(self, channel, pulse_us):
         # 20ms period (50Hz), 4096 steps
@@ -107,7 +107,7 @@ def get_servo_angle(finger, thumb_pos, key):
     angle = base_map[finger] + thumb_scale * thumb_pos + key_offset
     return int(angle)
 
-def play_right_hand(data):
+def play_right_hand(data, finger_to_servo):
     start_time = time.time()
 
     for row in data:
@@ -115,13 +115,9 @@ def play_right_hand(data):
             continue #skip left hand
 
         while time.time() - start_time < row["start_time"]:
-            pass
+            time.sleep_ms(1)
 
         finger = row["finger"]
-        key = row["key"]
-        thumb_pos = row["thumb_pos"]
-
-        servo = finger_to_servo[finger]
         key = row["key"]
         thumb_pos = row["thumb_pos"]
 
