@@ -1,0 +1,188 @@
+import bluetooth
+from machine import UART, Pin, I2C
+import time
+
+# =========================
+# HARDWARE SETUP (Unchanged)
+# =========================
+uart = UART(2, baudrate=115200, tx=Pin(16), rx=Pin(17))
+ADDR = 0xE0
+MSTEP = 16
+PULSES_PER_REV = 3200
+SPEED_GEAR = 80
+
+class PCA9685:
+    def __init__(self, i2c, addr=0x40):
+        self.i2c = i2c
+        self.addr = addr
+        self.i2c.writeto_mem(self.addr, 0x00, b'\x00')
+    def set_pwm_freq(self, freq):
+        prescale = int(25000000.0 / (4096 * freq) - 1)
+        old = self.i2c.readfrom_mem(self.addr, 0x00, 1)
+        self.i2c.writeto_mem(self.addr, 0x00, bytes([(old[0] & 0x7F) | 0x10]))
+        self.i2c.writeto_mem(self.addr, 0xFE, bytes([prescale]))
+        self.i2c.writeto_mem(self.addr, 0x00, old)
+        time.sleep_ms(5)
+        self.i2c.writeto_mem(self.addr, 0x00, bytes([old[0] | 0xa1]))
+    def set_pwm(self, ch, on, off):
+        data = bytearray([on & 0xFF, on >> 8, off & 0xFF, off >> 8])
+        self.i2c.writeto_mem(self.addr, 0x06 + 4 * ch, data)
+
+i2c = I2C(0, scl=Pin(22), sda=Pin(21))
+pca = PCA9685(i2c)
+pca.set_pwm_freq(50)
+
+servo_ch = [0, 1, 2, 3, 4]
+OPEN  = 150
+CLOSE = 500
+
+KEY_NAMES = [
+    "C1","D1","E1","F1","G1","A1","B1",
+    "C2","D2","E2","F2","G2","A2","B2",
+    "C3","D3","E3","F3","G3","A3","B3",
+    "C4","D4","E4","F4","G4","A4","B4","C5"
+]
+KEY_INDEX = {k: i for i, k in enumerate(KEY_NAMES)}
+
+step_degrees = 30.0 
+current_idx  = 0
+
+def calc_crc(data):
+    return sum(data) & 0xFF
+
+def move_degrees(degrees):
+    if abs(degrees) < 0.01: return
+    pulses = int(abs(degrees) / 360.0 * PULSES_PER_REV)
+    if pulses == 0: return
+    is_ccw = degrees < 0
+    speed_byte = (0x80 | SPEED_GEAR) if is_ccw else SPEED_GEAR
+    data = bytes([
+        ADDR, 0xFD, speed_byte,
+        (pulses >> 24) & 0xFF, (pulses >> 16) & 0xFF,
+        (pulses >> 8)  & 0xFF, pulses & 0xFF
+    ])
+    pkt = data + bytes([calc_crc(data)])
+    uart.write(pkt)
+    time.sleep_ms(5)
+    uart.read()
+    rpm = SPEED_GEAR * 30000 / (MSTEP * 200)
+    rotations = abs(degrees) / 360.0
+    wait_ms = int((rotations / rpm) * 60000 * 1.2) + 30
+    time.sleep_ms(wait_ms)
+
+def goto_key(key_name):
+    global current_idx
+    if key_name not in KEY_INDEX: return
+    target_idx = KEY_INDEX[key_name]
+    steps = target_idx - current_idx
+    if steps == 0: return
+    degrees = steps * step_degrees
+    move_degrees(degrees)
+    current_idx = target_idx
+
+# =========================
+# BLE SERVER WITH CHUNK BUFFERING
+# =========================
+BLE_NAME = "ESP32-BLE-Control"
+SERVICE_UUID = bluetooth.UUID("19b10000-e8f2-537e-4f6c-d104768a1214")
+RX_UUID      = bluetooth.UUID("19b10001-e8f2-537e-4f6c-d104768a1214")
+TX_UUID      = bluetooth.UUID("19b10002-e8f2-537e-4f6c-d104768a1214")
+
+# Set up the two channels
+SERVICES = (
+    (SERVICE_UUID, (
+        (RX_UUID, bluetooth.FLAG_WRITE),
+        (TX_UUID, bluetooth.FLAG_READ | bluetooth.FLAG_NOTIFY),
+    )),
+)
+
+class BLEPeripheral:
+    def __init__(self):
+        self.ble = bluetooth.BLE()
+        self.ble.active(True)
+        self.ble.irq(self.ble_irq)
+        ((self.rx_handle, self.tx_handle,),) = self.ble.gatts_register_services(SERVICES)
+        
+        self.buffer = ""   # Stores chunks until a newline is hit
+        self.payload = ""  # The final assembled string
+        
+        self.advertise()
+        self.set_status("READY")
+
+    def set_status(self, status):
+        self.ble.gatts_write(self.tx_handle, status.encode('utf-8'))
+
+    def advertise(self):
+        name = bytes(BLE_NAME, 'utf-8')
+        adv_data = bytearray(b'\x02\x01\x06') + bytearray([len(name) + 1, 0x09]) + name
+        self.ble.gap_advertise(100, adv_data)
+
+    def ble_irq(self, event, data):
+        if event == 1:
+            self.set_status("READY")
+        elif event == 2:
+            self.advertise()
+        elif event == 3: # GATTS Write (PC sent a chunk)
+            conn_handle, attr_handle = data
+            if attr_handle == self.rx_handle:
+                # Read the incoming chunk
+                val = self.ble.gatts_read(self.rx_handle).decode('utf-8')
+                self.buffer += val
+                
+                # Check if the chunk contained our end-of-message delimiter
+                if '\n' in self.buffer:
+                    self.payload = self.buffer.strip() # Move to payload
+                    self.buffer = ""                   # Clear buffer for next note
+
+def main():
+    ble = BLEPeripheral()
+    print("Ready. Waiting for BLE chunks...")
+
+    for f in servo_ch:
+        pca.set_pwm(f, 0, OPEN)
+
+    while True:
+        if ble.payload:
+            packet = ble.payload
+            ble.payload = "" 
+
+            ble.set_status("BUSY")
+            print(f"Executing fully reassembled string: {packet}")
+            
+            try:
+                parts = packet.split('|')
+                if len(parts) == 2:
+                    move_cmd, play_cmd = parts
+                    
+                    target_key = move_cmd.split(',')[0]
+                    goto_key(target_key)
+                    
+                    chords = play_cmd.split(';')
+                    fingers = []
+                    durations = []
+                    
+                    for chord in chords:
+                        f_str, d_str = chord.split(',')
+                        fingers.append(int(f_str) - 1) 
+                        durations.append(float(d_str))
+                        
+                    if fingers:
+                        max_dur_ms = int(max(durations) * 1000)
+                        for f in fingers:
+                            if 0 <= f <= 4:
+                                pca.set_pwm(servo_ch[f], 0, CLOSE)
+                        
+                        time.sleep_ms(max_dur_ms)
+                        
+                        for f in fingers:
+                            if 0 <= f <= 4:
+                                pca.set_pwm(servo_ch[f], 0, OPEN)
+                                
+            except Exception as e:
+                print(f"Error: {e}")
+
+            ble.set_status("READY")
+            
+        time.sleep_ms(50) 
+
+main()
