@@ -1,75 +1,61 @@
 import asyncio
 import time
-from bleak import BleakScanner, BleakClient
+from bleak import BleakClient, BleakScanner
 
-SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214"
-RX_UUID      = "19b10001-e8f2-537e-4f6c-d104768a1214"
-TX_UUID      = "19b10002-e8f2-537e-4f6c-d104768a1214"
+# Must match ESP32 UUIDs
+CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"
+FILE_NAME = "hotcrossbuns.txt"
 
-async def send_chunked_data(client, data_string):
-    """Splits a string into 20-byte chunks to bypass BLE limits safely."""
-    chunk_size = 20
-    payload = data_string + "\n" 
-    
-    for i in range(0, len(payload), chunk_size):
-        chunk = payload[i:i+chunk_size]
-        await client.write_gatt_char(RX_UUID, chunk.encode("utf-8"), response=True)
-        await asyncio.sleep(0.05) 
+async def play_song(client, lines):
+    print("\n--- Starting Song ---")
+    start_time = time.perf_counter()
+
+    for line in lines:
+        try:
+            target_time = float(line.split(":")[0])
+        except:
+            continue
+            
+        # Precise wait for timestamp
+        while (time.perf_counter() - start_time) < target_time:
+            await asyncio.sleep(0.001)
+
+        await client.write_gatt_char(CHAR_UUID, line.encode())
+        print(f"Sent: {line}")
+
+    # Song ended
+    print("\nReturning hand to starting position...")
+    await client.write_gatt_char(CHAR_UUID, b"RESET")
+    await asyncio.sleep(3.0) # Physical buffer for homing
 
 async def main():
-    print("Scanning for ESP32-BLE-Control...")
-    device = await BleakScanner.find_device_by_name("ESP32-BLE-Control")
+    print("Searching for ESP32-Piano...")
+    device = await BleakScanner.find_device_by_name("ESP32-Piano")
+
     if not device:
-        print("ESP32 not found. Make sure it's powered and advertising.")
+        print("Could not find ESP32.")
         return
 
     async with BleakClient(device) as client:
-        print("Connected to ESP32!")
+        print("Connected.")
         
-        try:
-            with open("hotcrossbuns.txt", "r") as f:
-                lines = [line.strip() for line in f if line.strip()]
-        except FileNotFoundError:
-            print("Error: Could not find 'hotcrossbuns.txt'")
-            return
+        # Load file
+        with open(FILE_NAME, "r") as f:
+            lines = [line.strip() for line in f if line.strip()]
 
-        print(f"Successfully loaded {len(lines)} commands.\n")
-        
         while True:
-            start_time = time.time()
+            print("-" * 30)
+            choice = input(f"Press 'y' to play {FILE_NAME}, or 'q' to quit: ").lower()
             
-            for line in lines:
-                # Extract the timestamp (e.g., "1.000" from "1.000:servo:1")
-                parts = line.split(":", 1)
-                if len(parts) < 2: continue
-                
-                try:
-                    target_timestamp = float(parts[0])
-                except ValueError:
-                    continue # Skip malformed lines
-
-                # 1. Wait until the correct time to send
-                target_time_abs = start_time + target_timestamp
-                sleep_duration = target_time_abs - time.time()
-                if sleep_duration > 0:
-                    await asyncio.sleep(sleep_duration)
-                
-                # 2. Send the exact line to the ESP32
-                print(f"[{target_timestamp:.3f}s] Sending: {line}")
-                await send_chunked_data(client, line)
-                
-                # 3. Wait for the ESP32 to finish the physical movement
-                await asyncio.sleep(0.1) # Give ESP32 time to switch to BUSY state
-                while True:
-                    status = await client.read_gatt_char(TX_UUID)
-                    if status.decode('utf-8') == "READY":
-                        break
-                    await asyncio.sleep(0.05)
-                    
-            print("\nSong complete!")
-            repeat = input("Play again? (y/n): ").strip().lower()
-            if repeat != 'y':
+            if choice == 'y':
+                await play_song(client, lines)
+            elif choice == 'q':
                 break
+            else:
+                print("Invalid input.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"Error: {e}")
