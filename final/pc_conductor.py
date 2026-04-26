@@ -2,19 +2,19 @@
 PC Conductor (v2) - BLE Central for ESP32 Piano Player
 
 Calibration flow (user-driven):
-  1) "현재 어느 건반?"  (rightmost候補, e.g. C5)
-  2) JOG 각도 입력 → 로봇이 움직임
-  3) "이동 후 어느 건반?"  (e.g. A4)
-  → step_degrees 부호까지 자동 역산
-  4) Home 확정 (가장 오른쪽 끝)
-  5) 서보 OPEN/CLOSE PWM 5채널 캘리브레이션
-  6) CSV로 연주 시작
+  1) "Which key is it on currently?" (Rightmost candidate, e.g., C5)
+  2) Input JOG angle -> Robot moves
+  3) "Which key is it on after moving?" (e.g., A4)
+  -> Automatically reverse-calculates step_degrees including the sign (+/-)
+  4) Confirm Home (Rightmost end)
+  5) Servo OPEN/CLOSE PWM 5-channel calibration
+  6) Start performance via CSV
 
-CSV 해석:
-  - 'key' = 스테퍼가 이동할 건반 음이름 (재민의 정의)
-  - 'finger' = 누를 서보 번호 (1~5)
-  - 'thumb_pos' 컬럼은 사용하지 않음
-  - 같은 (timestamp, key)에 여러 finger가 있으면 동시 타건
+CSV Interpretation:
+  - 'key' = Note name the stepper will move to (Jaemin's definition)
+  - 'finger' = Servo number to press (1~5)
+  - 'thumb_pos' column is not used
+  - If there are multiple fingers at the same (timestamp, key), they will be pressed simultaneously
 """
 import asyncio
 import time
@@ -30,7 +30,7 @@ RX_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214"
 TX_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"
 
 CSV_PATH = "fingering_plan.csv"
-INCLUDE_LEFT_HAND = False   # True로 바꾸면 L 행도 오른손과 동일 처리
+INCLUDE_LEFT_HAND = False   # If changed to True, 'L' rows are processed identical to the right hand
 CHUNK_SIZE = 20
 
 # ============================================================
@@ -45,7 +45,7 @@ NOTE_NAMES  = 'CDEFGAB'
 def key_to_idx(name):
     name = name.strip().upper()
     if len(name) < 2 or name[0] not in NOTE_OFFSET:
-        raise ValueError(f"잘못된 음이름: {name}")
+        raise ValueError(f"Invalid note name: {name}")
     octave = int(name[1:])
     return octave * 7 + NOTE_OFFSET[name[0]]
 
@@ -120,8 +120,8 @@ def load_csv(path, include_left=False):
     return raw, None, None
 
 def build_events(raw, home_key):
-    """(t, key, finger)*  ->  (t, rel_idx, [fingers], duration)*
-    rel_idx = home_idx - key_idx. Positive = 홈에서 왼쪽(낮은 음) 방향.
+    """(t, key, finger)* ->  (t, rel_idx, [fingers], duration)*
+    rel_idx = home_idx - key_idx. Positive = Left direction from home (lower notes).
     """
     home_idx = key_to_idx(home_key)
     groups = OrderedDict()
@@ -149,36 +149,36 @@ def header(s):
 async def calibrate_stepper(client, suggested_home):
     """Interactive stepper calibration.
     Returns (home_key, signed_step_deg)."""
-    header("STEP 1  홈 설정 (오른쪽 끝 건반)")
-    print(f"  CSV에서 가장 오른쪽 건반은 '{suggested_home}' 입니다.")
-    print(f"  로봇 손을 '{suggested_home}' 또는 그보다 더 오른쪽 건반에 위치시켜 주세요.")
-    print("  JOG 명령으로 미세 조정 가능합니다.\n")
+    header("STEP 1  Set Home (Rightmost Key)")
+    print(f"  The rightmost key in the CSV is '{suggested_home}'.")
+    print(f"  Please position the robot hand on '{suggested_home}' or further to the right.")
+    print("  Fine-tuning is possible using JOG commands.\n")
 
     home_key = None
     while True:
-        s = (await ainput("현재 로봇 손이 놓인 건반 (예: C5): ")).strip()
+        s = (await ainput("Current key the robot hand is on (e.g., C5): ")).strip()
         try:
             key_to_idx(s)
         except Exception as e:
             print(f"  {e}")
             continue
         while True:
-            c = (await ainput(f"  '{s}' 를 홈으로 확정? [y=확정, j=JOG조정, n=다시입력]: ")).strip().lower()
+            c = (await ainput(f"  Confirm '{s}' as Home? [y=Confirm, j=JOG tune, n=Retry]: ")).strip().lower()
             if c == 'y':
                 home_key = s
                 await send_cmd(client, "CAL:SET_HOME")
-                print(f"  ✓ 홈 = {home_key}")
+                print(f"  ✓ Home = {home_key}")
                 break
             elif c == 'j':
                 while True:
-                    j = (await ainput("    JOG 각도 (숫자, 빈 입력=종료): ")).strip()
+                    j = (await ainput("    JOG Angle (Number, Empty=Exit): ")).strip()
                     if not j:
                         break
                     try:
                         await send_cmd(client, f"CAL:JOG:{float(j)}")
                     except ValueError:
-                        print("    숫자만")
-                # JOG 후 현재 위치 다시 물어보기 위해 바깥 루프로
+                        print("    Numbers only")
+                # Break to outer loop to ask for current position again after JOG
                 break
             elif c == 'n':
                 break
@@ -188,23 +188,23 @@ async def calibrate_stepper(client, suggested_home):
             break
 
     # ---------------------------------
-    header("STEP 2  step_degrees 측정")
-    print("  로봇을 JOG로 이동시키고, 이동 후 도달한 건반을 입력하면")
-    print("  step_degrees 와 회전 방향(부호)이 자동으로 계산됩니다.\n")
+    header("STEP 2  Measure step_degrees")
+    print("  Move the robot using JOG, and enter the destination key.")
+    print("  The step_degrees and rotation direction (sign) will be calculated automatically.\n")
 
     signed_step = None
     while True:
         while True:
-            s = (await ainput("  JOG 각도 입력 (예: -60 또는 45): ")).strip()
+            s = (await ainput("  Enter JOG Angle (e.g., -60 or 45): ")).strip()
             try:
                 jog_deg = float(s)
                 break
             except ValueError:
-                print("  숫자만")
+                print("  Numbers only")
         await send_cmd(client, f"CAL:JOG:{jog_deg}")
 
         while True:
-            new_name = (await ainput("  이동 후 도달한 건반 (예: A4): ")).strip()
+            new_name = (await ainput("  Key reached after moving (e.g., A4): ")).strip()
             try:
                 new_idx = key_to_idx(new_name)
                 break
@@ -212,93 +212,93 @@ async def calibrate_stepper(client, suggested_home):
                 print(f"  {e}")
 
         home_idx = key_to_idx(home_key)
-        diff = home_idx - new_idx   # +: new가 홈보다 낮은 음(왼쪽)
+        diff = home_idx - new_idx   # +: new is lower than home (left)
         if diff == 0:
-            print("  같은 위치. 더 많이 움직여서 다시 측정하세요.")
+            print("  Same position. Move further and measure again.")
             continue
 
         signed_step = jog_deg / diff
-        print(f"  → {abs(jog_deg):.2f}도 이동, 건반 {abs(diff)}칸 차이")
-        print(f"  → step_degrees = {signed_step:+.4f}  (인덱스 +1 당 회전 각도)")
+        print(f"  → Moved {abs(jog_deg):.2f} degrees, key difference is {abs(diff)} steps")
+        print(f"  → step_degrees = {signed_step:+.4f}  (Rotation angle per index +1)")
         await send_cmd(client, f"CAL:SET_STEP:{signed_step:.6f}")
 
         # Restore physical position to home by reverse JOG
-        # (current_deg 는 ESP32에서 여전히 0 이고, 물리도 홈이 되어야 싱크)
-        print("  → 홈으로 물리 복귀...")
+        # (current_deg remains 0 on the ESP32, physical must also return to home to sync)
+        print("  → Physically returning to Home...")
         await send_cmd(client, f"CAL:JOG:{-jog_deg}")
 
-        c = (await ainput("  재측정? [y=재시도, Enter=확정]: ")).strip().lower()
+        c = (await ainput("  Measure again? [y=Retry, Enter=Confirm]: ")).strip().lower()
         if c != 'y':
             break
 
     # ---------------------------------
-    header("STEP 3  캘리브레이션 검증")
-    print("  임의의 건반으로 이동 테스트. Enter만 눌러 건너뛸 수 있습니다.\n")
+    header("STEP 3  Verify Calibration")
+    print("  Movement test to a random key. Press Enter to skip.\n")
     while True:
-        s = (await ainput("  이동 테스트할 건반 (예: A4, Enter=종료): ")).strip()
+        s = (await ainput("  Key to test movement (e.g., A4, Enter=Exit): ")).strip()
         if not s:
             break
         try:
             tgt_idx = key_to_idx(s)
         except Exception:
-            print("  잘못된 형식")
+            print("  Invalid format")
             continue
         rel = key_to_idx(home_key) - tgt_idx
         await send_cmd(client, f"CAL:GOTO:{rel}")
-        actual = (await ainput(f"    실제 도달 건반 (예상 {s}, Enter=OK): ")).strip()
+        actual = (await ainput(f"    Actually reached key (Expected {s}, Enter=OK): ")).strip()
         if actual and actual != s:
             try:
                 actual_rel = key_to_idx(home_key) - key_to_idx(actual)
                 if actual_rel != 0:
                     new_step = signed_step * (rel / actual_rel)
-                    print(f"    재튜닝 step_degrees = {new_step:+.4f}")
+                    print(f"    Re-tuned step_degrees = {new_step:+.4f}")
                     signed_step = new_step
                     await send_cmd(client, f"CAL:SET_STEP:{signed_step:.6f}")
             except Exception:
                 pass
-        # 홈 복귀
+        # Return to Home
         await send_cmd(client, "CAL:GOTO:0")
 
-    print(f"\n  최종: 홈={home_key}, step_degrees={signed_step:+.4f}")
+    print(f"\n  Final: Home={home_key}, step_degrees={signed_step:+.4f}")
     return home_key, signed_step
 
 async def calibrate_servos(client):
-    header("STEP 4  서보 PWM 캘리브레이션 (채널 0~4)")
-    print("  각 손가락별로 OPEN(뗌) / CLOSE(누름) PWM 값을 조정합니다.")
-    print("  표준값: OPEN≈205 (1.0ms), CLOSE≈410 (2.0ms)")
-    print("  현재 기본값 150/500 은 극단적이라 서보가 안 움직일 수 있으니 조정 권장.\n")
+    header("STEP 4  Servo PWM Calibration (Ch 0~4)")
+    print("  Adjust the OPEN (release) / CLOSE (press) PWM values for each finger.")
+    print("  Standard values: OPEN≈205 (1.0ms), CLOSE≈410 (2.0ms)")
+    print("  The current defaults of 150/500 are extreme and servos might not move, adjustment is recommended.\n")
 
     for ch in range(5):
-        print(f"-- 채널 {ch} (손가락 {ch+1}) --")
+        print(f"-- Channel {ch} (Finger {ch+1}) --")
         opw, cpw = 150, 500
         while True:
             await send_cmd(client, f"CAL:SET_SERVO:{ch}:{opw}:{cpw}")
             await send_cmd(client, f"CAL:TEST_SERVO:{ch}:OPEN")
-            s = (await ainput(f"  OPEN PWM (현재 {opw}, 숫자=변경, Enter=유지): ")).strip()
+            s = (await ainput(f"  OPEN PWM (Current {opw}, Number=Change, Enter=Keep): ")).strip()
             if not s:
                 break
             try:
                 opw = int(s)
             except ValueError:
-                print("  숫자만")
+                print("  Numbers only")
         while True:
             await send_cmd(client, f"CAL:SET_SERVO:{ch}:{opw}:{cpw}")
             await send_cmd(client, f"CAL:TEST_SERVO:{ch}:CLOSE")
-            s = (await ainput(f"  CLOSE PWM (현재 {cpw}, 숫자=변경, Enter=유지): ")).strip()
+            s = (await ainput(f"  CLOSE PWM (Current {cpw}, Number=Change, Enter=Keep): ")).strip()
             if not s:
                 break
             try:
                 cpw = int(s)
             except ValueError:
-                print("  숫자만")
+                print("  Numbers only")
         await send_cmd(client, f"CAL:TEST_SERVO:{ch}:OPEN")
-        print(f"  ✓ 채널 {ch}: OPEN={opw}, CLOSE={cpw}\n")
+        print(f"  ✓ Channel {ch}: OPEN={opw}, CLOSE={cpw}\n")
 
 # ============================================================
 # PERFORM
 # ============================================================
 async def perform(client, events, home_key):
-    print(f"\n=== 연주 시작 — {len(events)} events, 홈={home_key} ===")
+    print(f"\n=== Performance Started — {len(events)} events, Home={home_key} ===")
     start = time.time()
     skipped = 0
     for t, rel, fingers, dur in events:
@@ -314,58 +314,58 @@ async def perform(client, events, home_key):
         print(f"  [{t:6.2f}s] idx={rel:2d}  fingers={fstr}  dur={dur:.2f}")
         await send_cmd(client, cmd, timeout_s=10.0)
     if skipped:
-        print(f"  [WARN] 홈보다 오른쪽(음수 idx) 이벤트 {skipped}개 스킵됨")
-    print("=== 연주 완료 ===\n")
+        print(f"  [WARN] Skipped {skipped} events further right than Home (negative idx)")
+    print("=== Performance Finished ===\n")
 
 # ============================================================
 # MAIN
 # ============================================================
 async def main():
-    # CSV 먼저 읽어서 건반 범위 확인
+    # Read CSV first to check the key range
     raw, min_key, max_key = load_csv(CSV_PATH, INCLUDE_LEFT_HAND)
     if not raw:
-        print(f"{CSV_PATH} 가 비어있거나 읽을 수 없음.")
+        print(f"{CSV_PATH} is empty or unreadable.")
         return
 
     print("=" * 64)
     print("  ESP32 Piano Conductor v2")
     print("=" * 64)
-    print(f"  CSV: {CSV_PATH}  ({len(raw)} 행)")
-    print(f"  건반 범위: {min_key} (왼쪽/최저) ~ {max_key} (오른쪽/최고)")
-    print(f"  홈(오른쪽 끝) 권장: {max_key} 이상")
+    print(f"  CSV: {CSV_PATH}  ({len(raw)} rows)")
+    print(f"  Key range: {min_key} (Left/Lowest) ~ {max_key} (Right/Highest)")
+    print(f"  Recommended Home (Rightmost): {max_key} or higher")
 
-    print(f"\n  BLE 스캔 중: {DEVICE_NAME}...")
+    print(f"\n  Scanning BLE: {DEVICE_NAME}...")
     device = await BleakScanner.find_device_by_name(DEVICE_NAME)
     if not device:
-        print(f"  {DEVICE_NAME} 못 찾음. 전원/광고 상태 확인.")
+        print(f"  {DEVICE_NAME} not found. Check power/advertising status.")
         return
 
     async with BleakClient(device) as client:
-        print(f"  연결됨: {device.address}")
+        print(f"  Connected: {device.address}")
         await asyncio.sleep(0.5)
 
-        # 스테퍼 캘리브레이션
+        # Stepper Calibration
         home_key, signed_step = await calibrate_stepper(client, max_key)
 
-        # 서보 캘리브레이션
-        do_servo = (await ainput("\n서보 캘리브레이션 진행? [y/n]: ")).strip().lower()
+        # Servo Calibration
+        do_servo = (await ainput("\nProceed with Servo Calibration? [y/n]: ")).strip().lower()
         if do_servo == 'y':
             await calibrate_servos(client)
 
-        # 연주 이벤트 빌드
+        # Build Performance Events
         events = build_events(raw, home_key)
         rels = [e[1] for e in events]
-        print(f"\n연주 이벤트: {len(events)}, rel_idx 범위 [{min(rels)}, {max(rels)}]")
+        print(f"\nPerformance Events: {len(events)}, rel_idx range [{min(rels)}, {max(rels)}]")
         if min(rels) < 0:
-            print("  [WARN] 홈보다 오른쪽 건반(rel_idx<0)이 있음. 홈을 더 오른쪽으로 두는 걸 권장.")
+            print("  [WARN] There are keys to the right of Home (rel_idx<0). Recommend setting Home further right.")
 
-        input_ = (await ainput("\n연주 시작? [Enter=시작, q=종료]: ")).strip().lower()
+        input_ = (await ainput("\nStart Performance? [Enter=Start, q=Quit]: ")).strip().lower()
         if input_ == 'q':
             return
 
         while True:
             await perform(client, events, home_key)
-            again = (await ainput("다시 연주? [y/n]: ")).strip().lower()
+            again = (await ainput("Play again? [y/n]: ")).strip().lower()
             if again != 'y':
                 break
 
