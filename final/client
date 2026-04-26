@@ -1,4 +1,5 @@
 # THIS CODE IS VERY IMPORTANT
+# REV 2
 import bluetooth
 from machine import UART, Pin, I2C
 import time
@@ -8,15 +9,14 @@ SERVICE_UUID = bluetooth.UUID("19b10000-e8f2-537e-4f6c-d104768a1214")
 CHAR_UUID    = bluetooth.UUID("19b10002-e8f2-537e-4f6c-d104768a1214")
 
 # ===== Hardware Setup =====
-# UART for MKS Stepper: Pin 32 (TX) -> Motor RX | Pin 33 (RX) -> Motor TX
 uart = UART(2, baudrate=115200, tx=Pin(32), rx=Pin(33))
-# I2C for PCA9685: SCL=14, SDA=13
 i2c = I2C(0, scl=Pin(14), sda=Pin(13))
 
 class PCA9685:
     def __init__(self, i2c, addr=0x40):
         self.i2c, self.addr = i2c, addr
         self.i2c.writeto_mem(self.addr, 0x00, b'\x00')
+        
     def set_pwm_freq(self, freq):
         prescale = int(25000000.0 / (4096 * freq) - 1)
         old = self.i2c.readfrom_mem(self.addr, 0x00, 1)
@@ -25,8 +25,12 @@ class PCA9685:
         self.i2c.writeto_mem(self.addr, 0x00, old)
         time.sleep_ms(5)
         self.i2c.writeto_mem(self.addr, 0x00, bytes([old[0] | 0xa1]))
+        
     def set_angle(self, ch, angle):
-        val = int(150 + (angle / 180) * 450)
+        MIN_PULSE = 80
+        MAX_PULSE = 620 
+        val = int(MIN_PULSE + (angle / 180) * (MAX_PULSE - MIN_PULSE))
+        val = max(min(val, 650), 50)
         self.i2c.writeto_mem(self.addr, 0x06 + 4 * ch, bytearray([0, 0, val & 0xFF, val >> 8]))
 
 pca = PCA9685(i2c)
@@ -38,9 +42,27 @@ FINGER_CHANNELS = [0, 1, 2, 3, 4]
 SPLAY_CHANNELS  = [11, 12, 13, 14, 15]
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-current_total_index = 0 # Track absolute position in semitones
+# --- TIMING SETTINGS ---
+ANGLE = 125
+TIME_SLEEP = 3000       # Finger stays down for 3 seconds
+POST_NOTE_PAUSE = 1500  # Pause for 1.5 seconds after lifting
+# -----------------------
 
-# ===== Logic Functions =====
+current_total_index = 0 
+last_time = 0
+
+def zero_all_servos():
+    print("Zeroing all servos and splay...")
+    # Reset fingers to 0
+    for ch in FINGER_CHANNELS:
+        pca.set_angle(ch, 0)
+    # Reset splay to a neutral 75 degrees
+    for ch in SPLAY_CHANNELS:
+        pca.set_angle(ch, 75)
+    time.sleep_ms(500)
+    print("Hardware Reset Complete.")
+
+zero_all_servos()
 
 def get_key_index(key_str):
     try:
@@ -54,14 +76,11 @@ def move_stepper(num_keys):
     global current_total_index
     pulses = int(abs(num_keys * STEP_DEGREES) / 360.0 * PULSES_PER_REV)
     if pulses == 0: return
-    
     speed = (SPEED_GEAR + 128) if num_keys < 0 else SPEED_GEAR
     data = bytes([ADDR, 0xFD, speed, (pulses >> 24) & 0xFF, (pulses >> 16) & 0xFF, (pulses >> 8) & 0xFF, pulses & 0xFF])
     uart.write(data + bytes([sum(data) & 0xFF]))
-    
     current_total_index += num_keys
-    # Delay for physical travel
-    wait_time = int((pulses / PULSES_PER_REV) * 5000) + 250
+    wait_time = int((pulses / PULSES_PER_REV)) + 500 
     time.sleep_ms(wait_time)
 
 def on_receive(data):
@@ -70,15 +89,20 @@ def on_receive(data):
         msg = data.decode().strip()
         print("RX:", msg)
         
-        if msg == "RESET":
-            print(f"Homing from index {current_total_index}")
-            move_stepper(-current_total_index)
+        # New Logic: Handle End of Song or Manual Reset
+        if msg == "RESET" or msg == "FINISH":
+            print("Song Finished: Resetting all motors...")
+            # Return stepper to start
+            if current_total_index != 0:
+                move_stepper(-current_total_index)
+            # Reset fingers and splay
+            zero_all_servos()
             current_total_index = 0
             return
 
         parts = msg.split(":")
         if len(parts) < 3: return
-        cmd, val = parts[1], parts[2]
+        time_val, cmd, val = parts[0], parts[1], parts[2]
 
         if cmd == "step":
             keys = val.split("-")
@@ -87,20 +111,18 @@ def on_receive(data):
                 if s_idx is not None and e_idx is not None:
                     diff = e_idx - s_idx
                     if diff != 0: move_stepper(diff)
-                    else: print("Stay: C4-C4 detected.")
 
         elif cmd == "servo":
             idx = int(val) - 1
-            pca.set_angle(FINGER_CHANNELS[idx], 120)
-            time.sleep_ms(200)
+            pca.set_angle(FINGER_CHANNELS[idx], ANGLE)
+            time.sleep_ms(TIME_SLEEP)
             pca.set_angle(FINGER_CHANNELS[idx], 0)
-            time.sleep_ms(100)
+            time.sleep_ms(POST_NOTE_PAUSE) 
 
         elif cmd == "hand":
             angles = [int(x) for x in val.split(",")]
             for i, a in enumerate(angles):
                 pca.set_angle(SPLAY_CHANNELS[i], 75 + (a * 10))
-            time.sleep_ms(150)
 
     except Exception as e:
         print("Error:", e)
@@ -115,7 +137,7 @@ def ble_irq(event, data):
     elif event == 2: 
         print("BLE Disconnected")
         advertise()
-    elif event == 3: # Write event
+    elif event == 3: 
         conn_handle, attr_handle = data
         if attr_handle == CHAR_HANDLE:
             on_receive(ble.gatts_read(CHAR_HANDLE))
@@ -124,6 +146,7 @@ def advertise():
     name = b"ESP32-Piano"
     adv = b"\x02\x01\x06" + bytes([len(name)+1, 0x09]) + name
     ble.gap_advertise(100_000, adv_data=adv)
+    print("Ready for BLE connection...")
 
 ble.irq(ble_irq)
 advertise()
