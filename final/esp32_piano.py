@@ -12,7 +12,7 @@ from collections import deque
 # ============================================================
 # HARDWARE SETUP
 # ============================================================
-uart = UART(2, baudrate=115200, tx=Pin(16), rx=Pin(17))
+uart = UART(2, baudrate=115200, tx=Pin(32), rx=Pin(33))
 ADDR = 0xE0
 MSTEP = 16
 PULSES_PER_REV = 3200
@@ -35,13 +35,13 @@ class PCA9685:
         data = bytearray([on & 0xFF, on >> 8, off & 0xFF, off >> 8])
         self.i2c.writeto_mem(self.addr, 0x06 + 4 * ch, data)
 
-i2c = I2C(0, scl=Pin(22), sda=Pin(21))
+i2c = I2C(0, scl=Pin(14), sda=Pin(13))
 pca = PCA9685(i2c)
 pca.set_pwm_freq(50)
 
 SERVO_CH = [0, 1, 2, 3, 4]
-OPEN_PWM  = [150, 150, 150, 150, 150]
-CLOSE_PWM = [500, 500, 500, 500, 500]
+OPEN_PWM  = [90, 90, 90, 90, 90]
+CLOSE_PWM = [90, 90, 90, 90, 90]
 
 # ============================================================
 # STEPPER STATE
@@ -168,7 +168,7 @@ class BLEPeripheral:
         self.ble.active(True)
         self.ble.irq(self.ble_irq)
         ((self.rx_handle, self.tx_handle,),) = self.ble.gatts_register_services(SERVICES)
-        self.buffer = bytearray()
+        self.buffer = b""
         self.queue = deque((), 32)
         self.conn_handle = None
         self.advertise()
@@ -198,14 +198,18 @@ class BLEPeripheral:
             _, attr_handle = data
             if attr_handle == self.rx_handle:
                 chunk = self.ble.gatts_read(self.rx_handle)
-                self.buffer.extend(chunk)
-                while b'\n' in self.buffer:
-                    idx = self.buffer.index(b'\n')
+                # MicroPython bytearray doesn't support slice deletion,
+                # so we use a plain bytes buffer and rebuild it.
+                self.buffer = self.buffer + bytes(chunk)
+                while True:
+                    idx = self.buffer.find(b'\n')
+                    if idx < 0:
+                        break
                     try:
-                        msg = bytes(self.buffer[:idx]).decode('utf-8').strip()
+                        msg = self.buffer[:idx].decode('utf-8').strip()
                     except:
                         msg = ""
-                    del self.buffer[:idx+1]
+                    self.buffer = self.buffer[idx+1:]
                     if msg:
                         self.queue.append(msg)
 
@@ -225,3 +229,5 @@ def main():
         time.sleep_ms(20)
 
 main()
+
+
