@@ -2,9 +2,8 @@ import asyncio
 import time
 from bleak import BleakClient, BleakScanner
 
-# Must match ESP32 UUIDs
-CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"
-FILE_NAME = "hotcrossbuns.txt"
+# Must match ESP32 UUIDs, Changed to ...1215
+CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1215"
 
 async def play_song(client, lines):
     print("\n--- Starting Song ---")
@@ -56,6 +55,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
+        FILE_NAME = input("Enter the file name:")
         asyncio.run(main())
     except Exception as e:
         print(f"Error: {e}")

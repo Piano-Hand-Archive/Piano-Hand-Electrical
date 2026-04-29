@@ -1,0 +1,107 @@
+# LEFT HAND - REV 2.1 (Mirror Logic)
+import bluetooth
+from machine import UART, Pin, I2C
+import time
+
+# ===== UNIQUE UUID FOR LEFT HAND =====
+SERVICE_UUID = bluetooth.UUID("19b10000-e8f2-537e-4f6c-d104768a1215")
+CHAR_UUID    = bluetooth.UUID("19b10002-e8f2-537e-4f6c-d104768a1215")
+
+# ===== Hardware Setup =====
+uart = UART(2, baudrate=115200, tx=Pin(32), rx=Pin(33))
+i2c = I2C(0, scl=Pin(14), sda=Pin(13))
+
+class PCA9685:
+    def __init__(self, i2c, addr=0x40):
+        self.i2c, self.addr = i2c, addr
+        self.i2c.writeto_mem(self.addr, 0x00, b'\x00')
+    def set_pwm_freq(self, freq):
+        prescale = int(25000000.0 / (4096 * freq) - 1)
+        old = self.i2c.readfrom_mem(self.addr, 0x00, 1)
+        self.i2c.writeto_mem(self.addr, 0x00, bytes([(old[0] & 0x7F) | 0x10]))
+        self.i2c.writeto_mem(self.addr, 0xFE, bytes([prescale]))
+        self.i2c.writeto_mem(self.addr, 0x00, old)
+        time.sleep_ms(5)
+        self.i2c.writeto_mem(self.addr, 0x00, bytes([old[0] | 0xa1]))
+    def set_angle(self, ch, angle):
+        MIN_PULSE, MAX_PULSE = 80, 620
+        val = int(MIN_PULSE + (angle / 180) * (MAX_PULSE - MIN_PULSE))
+        val = max(min(val, 650), 50)
+        self.i2c.writeto_mem(self.addr, 0x06 + 4 * ch, bytearray([0, 0, val & 0xFF, val >> 8]))
+
+pca = PCA9685(i2c)
+pca.set_pwm_freq(50)
+
+# ===== Params & Tracking =====
+ADDR, PULSES_PER_REV, SPEED_GEAR, STEP_DEGREES = 0xE0, 3200, 80, 58.0
+FINGER_CHANNELS = [0, 1, 2, 3, 4]
+SPLAY_CHANNELS  = [11, 12, 13, 14, 15]
+NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+ANGLE = 40 # Standard for Left Hand, Changed
+POST_NOTE_PAUSE = 100
+current_total_index = 0 
+last_time = 0
+
+def zero_all_servos():
+    for ch in FINGER_CHANNELS: pca.set_angle(ch, 0)
+    for ch in SPLAY_CHANNELS: pca.set_angle(ch, 75)
+    time.sleep_ms(500)
+
+def move_stepper(num_keys):
+    global current_total_index
+    pulses = int(abs(num_keys * STEP_DEGREES) / 360.0 * PULSES_PER_REV)
+    if pulses == 0: return
+    # LEFT HAND MIRROR: Positive keys (higher) = Speed + 128
+    speed = SPEED_GEAR if num_keys < 0 else (SPEED_GEAR + 128)
+    data = bytes([ADDR, 0xFD, speed, (pulses >> 24) & 0xFF, (pulses >> 16) & 0xFF, (pulses >> 8) & 0xFF, pulses & 0xFF])
+    uart.write(data + bytes([sum(data) & 0xFF]))
+    current_total_index += num_keys
+    time.sleep_ms(int((pulses / PULSES_PER_REV)) + 500)
+
+def on_receive(data):
+    global current_total_index, last_time
+    try:
+        msg = data.decode().strip()
+        if msg in ["RESET", "FINISH"]:
+            if current_total_index != 0: move_stepper(-current_total_index)
+            zero_all_servos()
+            current_total_index, last_time = 0, 0
+            return
+        parts = msg.split(":")
+        curr_t, cmd, val = int(parts[0]), parts[1], parts[2]
+        if cmd == "step":
+            keys = val.split("-")
+            s_idx = (int(keys[0][-1])*12) + NOTES.index(keys[0][:-1])
+            e_idx = (int(keys[1][-1])*12) + NOTES.index(keys[1][:-1])
+            move_stepper(e_idx - s_idx)
+        elif cmd == "servo":
+            idx, duration = int(val)-1, max(curr_t - last_time, 50)
+            pca.set_angle(FINGER_CHANNELS[idx], ANGLE)
+            time.sleep_ms(duration)
+            pca.set_angle(FINGER_CHANNELS[idx], 0)
+            time.sleep_ms(POST_NOTE_PAUSE)
+            last_time = curr_t
+        elif cmd == "hand":
+            angles = [int(x) for x in val.split(",")]
+            for i, a in enumerate(angles): 
+                # MIRRORED SPLAY: 75 minus adjustment
+                pca.set_angle(SPLAY_CHANNELS[i], 75 - (a * 10))
+    except: pass
+
+# BLE Setup
+ble = bluetooth.BLE()
+ble.active(True)
+((CHAR_HANDLE,),) = ble.gatts_register_services(((SERVICE_UUID, ((CHAR_UUID, bluetooth.FLAG_WRITE),)),))
+def ble_irq(event, data):
+    if event == 2: advertise()
+    elif event == 3: 
+        conn, attr = data
+        if attr == CHAR_HANDLE: on_receive(ble.gatts_read(CHAR_HANDLE))
+def advertise():
+    name = b"ESP32-Piano-Left"
+    adv = b"\x02\x01\x06" + bytes([len(name)+1, 0x09]) + name
+    ble.gap_advertise(100_000, adv_data=adv)
+ble.irq(ble_irq)
+advertise()
+while True: time.sleep_ms(200)

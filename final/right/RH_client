@@ -1,4 +1,5 @@
-# LH Client - REV 2 (Mirrored)
+# THIS CODE IS VERY IMPORTANT
+# REV 2
 import bluetooth
 from machine import UART, Pin, I2C
 import time
@@ -35,23 +36,31 @@ class PCA9685:
 pca = PCA9685(i2c)
 pca.set_pwm_freq(50)
 
-# ===== Global Parameters =====
-ADDR, PULSES_PER_REV, SPEED_GEAR, STEP_DEGREES = 0xE0, 3200, 80, 60.0
-FINGER_CHANNELS = [0, 1, 2, 3, 4] # Thumb to Pinky
+# ===== Global Parameters & Tracking =====
+ADDR, PULSES_PER_REV, SPEED_GEAR, STEP_DEGREES = 0xE0, 3200, 80, 58.0
+FINGER_CHANNELS = [0, 1, 2, 3, 4]
 SPLAY_CHANNELS  = [11, 12, 13, 14, 15]
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-ANGLE = 125
-TIME_SLEEP = 3000       
-POST_NOTE_PAUSE = 1500  
+# --- TIMING SETTINGS ---
+ANGLE = 75 # Changed Client to 75
+# TIME_SLEEP is now dynamic based on last_time
+POST_NOTE_PAUSE = 100  # Minimal pause for mechanical reset
+# -----------------------
 
 current_total_index = 0 
+last_time = 0  # Global tracker for the previous timestamp
 
 def zero_all_servos():
-    print("Zeroing LH servos...")
-    for ch in FINGER_CHANNELS: pca.set_angle(ch, 0)
-    for ch in SPLAY_CHANNELS: pca.set_angle(ch, 75)
+    print("Zeroing all servos and splay...")
+    # Reset fingers to 0
+    for ch in FINGER_CHANNELS:
+        pca.set_angle(ch, 0)
+    # Reset splay to a neutral 75 degrees
+    for ch in SPLAY_CHANNELS:
+        pca.set_angle(ch, 75)
     time.sleep_ms(500)
+    print("Hardware Reset Complete.")
 
 zero_all_servos()
 
@@ -60,7 +69,8 @@ def get_key_index(key_str):
         note = key_str[:-1]
         octave = int(key_str[-1])
         return (octave * 12) + NOTES.index(note)
-    except: return None
+    except:
+        return None
 
 def move_stepper(num_keys):
     global current_total_index
@@ -70,44 +80,68 @@ def move_stepper(num_keys):
     data = bytes([ADDR, 0xFD, speed, (pulses >> 24) & 0xFF, (pulses >> 16) & 0xFF, (pulses >> 8) & 0xFF, pulses & 0xFF])
     uart.write(data + bytes([sum(data) & 0xFF]))
     current_total_index += num_keys
-    time.sleep_ms(int((pulses / PULSES_PER_REV)) + 500)
+    wait_time = int((pulses / PULSES_PER_REV)) + 500 
+    time.sleep_ms(wait_time)
 
 def on_receive(data):
-    global current_total_index
+    global current_total_index, last_time
     try:
         msg = data.decode().strip()
-        if msg in ["RESET", "FINISH"]:
-            if current_total_index != 0: move_stepper(-current_total_index)
+        print("RX:", msg)
+        
+        if msg == "RESET" or msg == "FINISH":
+            print("Song Finished: Resetting...")
+            if current_total_index != 0:
+                move_stepper(-current_total_index)
             zero_all_servos()
             current_total_index = 0
+            last_time = 0 # Reset timing tracker
             return
 
         parts = msg.split(":")
         if len(parts) < 3: return
-        cmd, val = parts[1], parts[2]
+        
+        # Parse the timestamp and command
+        current_time_val = int(parts[0]) 
+        cmd = parts[1]
+        val = parts[2]
 
         if cmd == "step":
             keys = val.split("-")
-            s_idx, e_idx = get_key_index(keys[0]), get_key_index(keys[1])
-            if s_idx is not None and e_idx is not None:
-                move_stepper(e_idx - s_idx)
+            if len(keys) == 2:
+                s_idx, e_idx = get_key_index(keys[0]), get_key_index(keys[1])
+                if s_idx is not None and e_idx is not None:
+                    diff = e_idx - s_idx
+                    if diff != 0: move_stepper(diff)
 
         elif cmd == "servo":
-            # MIRROR LOGIC: If input is 1 (Thumb), map to physical channel 0
-            # If input is 5 (Pinky), map to physical channel 4
             idx = int(val) - 1
+            
+            # Calculate dynamic duration based on time slot difference
+            # Note: For the very first note, last_time is 0.
+            duration = current_time_val - last_time
+            if duration < 0: duration = 500 # Safety fallback
+            
+            print("Playing note for:", duration, "ms")
+            
+            # Press finger
             pca.set_angle(FINGER_CHANNELS[idx], ANGLE)
-            time.sleep_ms(TIME_SLEEP)
+            time.sleep_ms(duration)
+            
+            # Release finger
             pca.set_angle(FINGER_CHANNELS[idx], 0)
             time.sleep_ms(POST_NOTE_PAUSE) 
+            
+            # Update last_time for the next message
+            last_time = current_time_val
 
         elif cmd == "hand":
             angles = [int(x) for x in val.split(",")]
-            # Mirroring splay: reversing the order of the list
-            angles.reverse()
             for i, a in enumerate(angles):
                 pca.set_angle(SPLAY_CHANNELS[i], 75 + (a * 10))
-    except Exception as e: print("Error:", e)
+
+    except Exception as e:
+        print("Error:", e)
 
 # ===== BLE Setup =====
 ble = bluetooth.BLE()
@@ -115,17 +149,23 @@ ble.active(True)
 ((CHAR_HANDLE,),) = ble.gatts_register_services(((SERVICE_UUID, ((CHAR_UUID, bluetooth.FLAG_WRITE),)),))
 
 def ble_irq(event, data):
-    if event == 1: print("LH Connected")
-    elif event == 2: advertise()
-    elif event == 3:
+    if event == 1: print("BLE Connected")
+    elif event == 2: 
+        print("BLE Disconnected")
+        advertise()
+    elif event == 3: 
         conn_handle, attr_handle = data
-        if attr_handle == CHAR_HANDLE: on_receive(ble.gatts_read(CHAR_HANDLE))
+        if attr_handle == CHAR_HANDLE:
+            on_receive(ble.gatts_read(CHAR_HANDLE))
 
 def advertise():
-    name = b"ESP32-LH-Piano"
+    name = b"ESP32-Piano-Right"
     adv = b"\x02\x01\x06" + bytes([len(name)+1, 0x09]) + name
     ble.gap_advertise(100_000, adv_data=adv)
+    print("Ready for BLE connection...")
 
 ble.irq(ble_irq)
 advertise()
-while True: time.sleep_ms(200)
+
+while True:
+    time.sleep_ms(200)

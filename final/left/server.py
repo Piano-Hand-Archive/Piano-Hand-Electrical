@@ -2,8 +2,8 @@ import asyncio
 import time
 from bleak import BleakClient, BleakScanner
 
+# Changed to ...1214
 CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"
-FILE_NAME = "test.txt"
 
 async def play_song(client, lines):
     print("\n--- Starting Playback ---")
@@ -52,4 +52,5 @@ async def main():
             else: break
 
 if __name__ == "__main__":
+    FILE_NAME = input("Enter file name")
     asyncio.run(main())
