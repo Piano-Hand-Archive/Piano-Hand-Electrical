@@ -4,7 +4,7 @@ from bleak import BleakClient, BleakScanner
 
 # Must match ESP32 UUIDs
 CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"
-FILE_NAME = "hotcrossbuns.txt"
+# FILE_NAME = "hotcrossbuns.txt"
 
 async def play_song(client, lines):
     print("\n--- Starting Song ---")
@@ -39,6 +39,7 @@ async def main():
     async with BleakClient(device) as client:
         print("Connected.")
         
+        FILE_NAME = input("Enter the file name: ")
         # Load file
         with open(FILE_NAME, "r") as f:
             lines = [line.strip() for line in f if line.strip()]

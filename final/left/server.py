@@ -2,8 +2,9 @@ import asyncio
 import time
 from bleak import BleakClient, BleakScanner
 
-# Changed to ...1214
-CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"
+# Changed to ...1215
+CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1215"
+# Change above line
 
 async def play_song(client, lines):
     print("\n--- Starting Playback ---")
@@ -40,7 +41,8 @@ async def play_song(client, lines):
 
 async def main():
     print("Searching for ESP32-Piano...")
-    device = await BleakScanner.find_device_by_name("ESP32-Piano")
+    # Change next line
+    device = await BleakScanner.find_device_by_name("ESP32-Piano-Left")
     if not device: return
 
     async with BleakClient(device) as client:
@@ -52,5 +54,5 @@ async def main():
             else: break
 
 if __name__ == "__main__":
-    FILE_NAME = input("Enter file name")
+    FILE_NAME = input("Enter file name: ")
     asyncio.run(main())
