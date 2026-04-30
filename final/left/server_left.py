@@ -3,7 +3,7 @@ import time
 from bleak import BleakClient, BleakScanner
 
 # Changed to ...1215
-CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1215"
+CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"
 # Change above line
 
 async def play_song(client, lines):

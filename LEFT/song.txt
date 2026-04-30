@@ -1,0 +1,5 @@
+0.0:step:F5-C4
+1.0:step:C4-D4
+2.0:step:D4-E4
+3.0:step:E4-F4
+4.0:step:F4-G5

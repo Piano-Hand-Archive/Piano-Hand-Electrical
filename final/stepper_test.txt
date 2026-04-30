@@ -1,0 +1,4 @@
+0.0:step:C1-E1
+2.0:step:E1-C1
+4.0:step:C1-E1
+6.0:step:E1-C1
