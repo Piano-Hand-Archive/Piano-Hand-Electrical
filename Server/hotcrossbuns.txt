@@ -1,5 +1,4 @@
 1.0:step:C4-F4
-1.0:servo:5
 2.0:step:F4-C4
 2.0:servo:4
 3.0:step:C4-C4

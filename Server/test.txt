@@ -1,0 +1,6 @@
+0.0:servo:2
+1.0:servo:2
+2.0:servo:2
+3.0:servo:2
+4.0:step:C4-C3
+5.0:servo:2

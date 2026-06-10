@@ -3,8 +3,8 @@ import time
 from bleak import BleakClient, BleakScanner
 
 # MATCHED TO ESP32
-CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1215"
-FILE_NAME = "hotcrossbuns.txt"
+CHAR_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214" ## Difference
+FILE_NAME = "hotcrossbuns2.txt"
 
 async def play_song(client, lines):
     print("\n--- Starting Song ---")
@@ -30,7 +30,7 @@ async def play_song(client, lines):
 
 async def main():
     print("Searching for ESP32-Piano...")
-    device = await BleakScanner.find_device_by_name("ESP32-Piano-Right")
+    device = await BleakScanner.find_device_by_name("ESP32-Piano-Left") ## Difference
 
     if not device:
         print("Could not find ESP32. Ensure it is powered and advertising.")

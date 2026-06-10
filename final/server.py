@@ -30,7 +30,7 @@ async def play_song(client, lines):
 
 async def main():
     print("Searching for ESP32-Piano...")
-    device = await BleakScanner.find_device_by_name("ESP32-Piano")
+    device = await BleakScanner.find_device_by_name("ESP32-Piano-Left")
 
     if not device:
         print("Could not find ESP32.")
